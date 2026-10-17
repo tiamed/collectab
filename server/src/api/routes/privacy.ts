@@ -41,7 +41,7 @@ export function privacyPolicyHtml(env: Pick<Env, 'BETTER_AUTH_URL' | 'PRIVACY_CO
 </ul>
 
 <h2>What we do not collect</h2>
-<p>The extension does not read page contents, track your browsing history, or send any data to analytics or advertising services. It only reads the title, URL and favicon of a tab when you explicitly save it, and reads your browser bookmarks only when you explicitly import them.</p>
+<p>The extension does not read page contents, track your browsing history, or send any data to analytics or advertising services. It only reads the title, URL and favicon of the current tab when you open the extension popup to save it. Imports read only the file you choose.</p>
 
 <h2>How data is used</h2>
 <p>Data is used solely to provide the bookmark sync service: storing your collections, syncing them between your devices, and sharing them with people you invite. It is never sold, rented or used for advertising.</p>
@@ -50,6 +50,7 @@ export function privacyPolicyHtml(env: Pick<Env, 'BETTER_AUTH_URL' | 'PRIVACY_CO
 <ul>
   ${env.OAUTH_GOOGLE_CLIENT_ID ? '<li><strong>Google</strong> - only if you choose "Continue with Google", to authenticate you.</li>' : ''}
   ${env.RESEND_API_KEY ? '<li><strong>Resend</strong> - to deliver invitation and password-reset emails to your address.</li>' : ''}
+  <li><strong>Favicon services</strong> (DuckDuckGo, Google, icon.horse) - the extension requests site icons for bookmarks, which sends the bookmarked site's hostname (not the full URL or any account data) to these services.</li>
   <li>The hosting provider of this server, which stores the database.</li>
 </ul>
 
