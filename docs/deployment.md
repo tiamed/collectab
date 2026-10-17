@@ -141,6 +141,16 @@ runs first-party on your domain inside that auth window. `/api/oauth/complete` t
 extension without sending it over the network. Redirect targets are restricted to extension redirect
 hosts (pinned by `EXTENSION_IDS` when set).
 
+**Existing email/password accounts**: signing in with Google using the same address links Google to
+that account and signs the user in, provided Google reports the email as verified. Collectab never
+verifies emails at password sign-up, so that account's password could have been set by anyone who
+typed the address. On that first link, the server removes the account's password and ends its other
+sessions, so a squatter who pre-registered someone else's email loses access. The user's bookmarks
+and spaces stay. Afterwards the user signs in with Google, or gets a password back through
+"forgot password" (needs `RESEND_API_KEY`) or an admin setting one. Accounts whose email is already
+verified (for example, any account Google has linked to before) keep their password. Different-email
+links and unverified Google emails are still refused.
+
 ## 5. Point the extension at the server
 
 - **Store build**: bake the default in at build time:

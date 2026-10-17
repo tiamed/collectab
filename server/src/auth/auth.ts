@@ -10,6 +10,7 @@ import { getEnv } from '../config/env.js';
 import { trustedOrigins } from './origins.js';
 import { inviteLandingUrl, isAdmin } from './roles.js';
 import { signUpPermit } from './invites.js';
+import { accountLinking, claimUnprovenAccount } from './account-linking.js';
 import { APIError } from 'better-auth/api';
 
 const SALT_ROUNDS = 12;
@@ -89,7 +90,11 @@ const authOptions = {
         },
       }
     : {},
+  account: { accountLinking },
   databaseHooks: {
+    account: {
+      create: { before: claimUnprovenAccount },
+    },
     user: {
       create: {
         before: async (_user, ctx) => {
