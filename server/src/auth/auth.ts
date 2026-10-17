@@ -8,6 +8,7 @@ import { getDb } from '../database/client.js';
 import * as dbSchema from '../database/schema.js';
 import { getEnv } from '../config/env.js';
 import { trustedOrigins } from './origins.js';
+import { inviteLandingUrl, isAdmin } from './roles.js';
 
 const SALT_ROUNDS = 12;
 
@@ -130,11 +131,19 @@ const authOptions = {
     }),
     bearer(),
     invite({
-      defaultSenderResponse: 'url',
-      defaultSenderResponseRedirect: 'signUp',
+      defaultSenderResponse: 'token',
+      invitationTokenExpiresIn: 7 * 24 * 60 * 60,
+      // The plugin defaults to letting *any* signed-in user mint invites,
+      // including role=admin ones they can then redeem themselves.
+      canCreateInvite: ({ inviterUser }) => isAdmin(inviterUser as { id: string; role?: string | null }),
       sendUserInvitation: env.RESEND_API_KEY
-        ? async ({ email, url }) => {
-            sendEmail(email, 'You are invited to Collectab', `Click <a href="${url}">here</a> to accept your invitation.`);
+        ? async ({ email, token }) => {
+            const url = inviteLandingUrl(token);
+            sendEmail(
+              email,
+              'You are invited to Collectab',
+              `You have been invited to Collectab. Open <a href="${url}">${url}</a> for your invite code and setup steps.`,
+            );
           }
         : undefined,
     }),

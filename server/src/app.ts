@@ -94,6 +94,11 @@ export function createApp() {
   // Must be registered before the Better Auth catch-all below.
   app.route('/api/auth/me', meRoutes);
 
+  // better-invite's endpoints assume a cookie-based web app (and its
+  // list/cancel are scoped to the creating admin). Invites are created and
+  // managed via /api/admin and redeemed during sign-up instead.
+  app.all('/api/auth/invite/*', (c) => c.json({ error: 'Not found' }, 404));
+
   app.get('/api/oauth/google/start', async (c) => {
     if (!googleEnabled) return c.text('Google sign-in is not enabled on this server', 404);
     const redirectUri = c.req.query('redirect_uri') ?? '';

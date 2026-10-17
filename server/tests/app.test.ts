@@ -83,6 +83,14 @@ describe('app wiring', () => {
     expect(await forwarded.text()).toBe('{"email":"a@b.c"}');
   });
 
+  it('does not expose better-invite endpoints over HTTP', async () => {
+    for (const path of ['/api/auth/invite/create', '/api/auth/invite/activate', '/api/auth/invite/list']) {
+      const res = await app.request(path, { method: 'POST', body: '{"role":"admin"}', headers: { Authorization: 'Bearer t' } });
+      expect(res.status, path).toBe(404);
+    }
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('exposes public auth config', async () => {
     const res = await app.request('/api/auth-config');
     expect(await res.json()).toEqual({ inviteMode: 'open', google: true });

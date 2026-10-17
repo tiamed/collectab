@@ -3,18 +3,13 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { auth } from '../../auth/auth.js';
 import { authMiddleware, type AuthEnv } from '../middleware/auth.js';
-import { getEnv } from '../../config/env.js';
+import { isAdmin } from '../../auth/roles.js';
 
 export const adminRoutes = new Hono<AuthEnv>();
 
-function isAdminUser(userId: string, role: string | undefined): boolean {
-  const env = getEnv();
-  return role === 'admin' || env.ADMIN_USER_IDS.includes(userId);
-}
-
 adminRoutes.use('*', authMiddleware);
 adminRoutes.use('*', async (c, next) => {
-  if (!isAdminUser(c.get('userId'), c.get('userRole'))) {
+  if (!isAdmin({ id: c.get('userId'), role: c.get('userRole') })) {
     return c.json({ error: 'Forbidden' }, 403);
   }
   await next();
@@ -76,7 +71,6 @@ adminRoutes.post('/invite', zValidator('json', createInviteSchema), async (c) =>
       role,
       maxUses,
       expiresIn,
-      senderResponseRedirect: 'signUp',
     },
     headers: c.req.raw.headers,
   });
