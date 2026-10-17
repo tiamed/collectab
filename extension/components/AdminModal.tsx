@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, RefreshCw, Copy, Check, Ban, KeyRound, LogOut, Trash2, Search, UserCheck } from 'lucide-react';
+import { X, RefreshCw, Copy, Check, Ban, KeyRound, LogOut, Trash2, Search, UserCheck, ChevronDown } from 'lucide-react';
 import { admin, isUnauthorizedError } from '@/lib/api';
 import type { AdminInvite, AdminStats, AdminUser, UserRole } from '@/lib/api';
 import ConfirmModal from './ConfirmModal';
@@ -32,6 +32,22 @@ function formatRelative(iso: string | null) {
 
 function quotaLabel(quota: number | null) {
   return quota === null ? '∞' : String(quota);
+}
+
+function Select({ className = '', compact = false, ...props }: React.SelectHTMLAttributes<HTMLSelectElement> & { compact?: boolean }) {
+  return (
+    <div className={`relative inline-block ${className}`}>
+      <select
+        {...props}
+        className={`w-full cursor-pointer appearance-none rounded border border-[var(--border)] bg-[var(--background)] text-xs text-[var(--foreground)] outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:cursor-default disabled:opacity-60 ${
+          compact ? 'py-1 pl-2 pr-6' : 'py-1.5 pl-2 pr-7'
+        }`}
+      />
+      <ChevronDown
+        className={`pointer-events-none absolute top-1/2 size-3 -translate-y-1/2 text-[var(--muted)] ${compact ? 'right-1.5' : 'right-2'}`}
+      />
+    </div>
+  );
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -279,14 +295,13 @@ export default function AdminModal({ currentUserId, onClose }: AdminModalProps) 
                     onChange={(e) => { setSearch(e.target.value); setPage(0); }}
                   />
                 </div>
-                <select
-                  className={inputCls}
+                <Select
                   value={roleFilter}
                   onChange={(e) => { setRoleFilter(e.target.value as UserRole | ''); setPage(0); }}
                 >
                   <option value="">All roles</option>
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
+                </Select>
               </div>
 
               <table className="w-full text-left text-xs">
@@ -317,15 +332,16 @@ export default function AdminModal({ currentUserId, onClose }: AdminModalProps) 
                           )}
                         </td>
                         <td className="py-2 pr-2">
-                          <select
-                            className={`${inputCls} py-1`}
+                          <Select
+                            compact
+                            className="w-20"
                             value={u.role}
                             disabled={self || u.isEnvAdmin}
                             title={u.isEnvAdmin ? 'Admin via ADMIN_USER_IDS' : undefined}
                             onChange={(e) => changeRole(u, e.target.value as UserRole)}
                           >
                             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                          </select>
+                          </Select>
                         </td>
                         <td className={`py-2 pr-2 ${overQuota ? 'text-amber-400' : 'text-[var(--foreground)]'}`}>
                           {u.bookmarkCount} / {quotaLabel(u.quota)}
@@ -437,9 +453,9 @@ export default function AdminModal({ currentUserId, onClose }: AdminModalProps) 
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="text-[10px] text-[var(--muted)]">
                     Role
-                    <select className={`${inputCls} mt-0.5 block`} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as UserRole)}>
+                    <Select className="mt-0.5 block w-24" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as UserRole)}>
                       {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
+                    </Select>
                   </label>
                   <label className="text-[10px] text-[var(--muted)]">
                     Uses
@@ -454,12 +470,12 @@ export default function AdminModal({ currentUserId, onClose }: AdminModalProps) 
                   </label>
                   <label className="text-[10px] text-[var(--muted)]">
                     Expires in
-                    <select className={`${inputCls} mt-0.5 block`} value={inviteDays} onChange={(e) => setInviteDays(Number(e.target.value))}>
+                    <Select className="mt-0.5 block w-24" value={inviteDays} onChange={(e) => setInviteDays(Number(e.target.value))}>
                       <option value={1}>1 day</option>
                       <option value={7}>7 days</option>
                       <option value={30}>30 days</option>
                       <option value={90}>90 days</option>
-                    </select>
+                    </Select>
                   </label>
                   <label className="min-w-[10rem] flex-1 text-[10px] text-[var(--muted)]">
                     Email (optional{stats && !stats.config.emailEnabled ? ', needs RESEND_API_KEY' : ''})
