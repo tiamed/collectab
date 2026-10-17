@@ -35,8 +35,9 @@ Recommended for a public server:
 |---|---|
 | `EXTENSION_IDS` | Your Chrome Web Store item ID (32 letters, shown in the developer dashboard). Add `moz-extension://` to also allow Firefox. Empty = any extension may sign in. |
 | `INVITE_MODE` / `DEFAULT_ROLE` / `ROLE_QUOTAS` | Public trial: `open` / `guest` / `guest=10,user=500,admin=unlimited`. Closed beta: `invite-only`. |
-| `ADMIN_USER_IDS` | Your own user ID (sign up first, then read it from `GET /api/auth/me`), so you can create invites and promote users. |
+| `ADMIN_USER_IDS` | Your own user ID (sign up first, then read it from `GET /api/auth/me`). After a restart the extension shows **Settings → Account → Admin panel**, where you manage users and invites. |
 | `PRIVACY_OPERATOR_NAME`, `PRIVACY_CONTACT_EMAIL` | Shown on `https://api.example.com/privacy`. Use that URL as the store listing's privacy policy. |
+| `EXTENSION_INSTALL_URL` | Your Chrome Web Store listing URL, shown on invite pages (`https://api.example.com/invite/<code>`). |
 
 Optional:
 

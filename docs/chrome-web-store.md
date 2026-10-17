@@ -45,7 +45,8 @@ creditworthiness.
 
 ## Reviewer test account
 
-Reviewers need to sign in. Either keep `INVITE_MODE=open` (anyone can register as `guest`), or create
-an account for them and give the credentials in "Test instructions", for example:
+Reviewers need to sign in. Either keep `INVITE_MODE=open` (anyone can register as `guest`), or give
+them an invite code (Admin panel → Invites, role `user`, 30 days) to paste into **Invite code** when
+signing up, or create an account for them and give the credentials in "Test instructions", for example:
 
 > Open a new tab → Sign in → email `reviewer@example.com` / password `…`. The server URL is preconfigured.

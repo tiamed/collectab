@@ -164,6 +164,7 @@ With `NODE_ENV=production` the server refuses to start if `BETTER_AUTH_SECRET` i
 | `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | Enables "Continue with Google" | — |
 | `RATE_LIMIT_WINDOW_SECONDS` / `RATE_LIMIT_MAX` | `/api/auth/*` limit per IP and path (sign-in/up additionally 3 per 10 s) | `60` / `100` |
 | `PRIVACY_OPERATOR_NAME` / `PRIVACY_CONTACT_EMAIL` | Shown on the `/privacy` page | — |
+| `EXTENSION_INSTALL_URL` | Extension install link shown on invite pages | — |
 
 > **Production**: always set strong random `BETTER_AUTH_SECRET` and `POSTGRES_PASSWORD`, and serve over HTTPS.
 
@@ -171,9 +172,11 @@ With `NODE_ENV=production` the server refuses to start if `BETTER_AUTH_SECRET` i
 
 - **Sessions**: Better Auth issues an opaque session token that the extension sends as `Authorization: Bearer …`. Sessions are sliding: they stay valid while used and expire after `SESSION_EXPIRES_DAYS` of inactivity. There is no refresh token. A 401 means the session is gone, and the extension signs out immediately instead of retrying.
 - **Self-hosted control**: set `INVITE_MODE=invite-only` to require an invitation before anyone can register. In `open` mode (default), anyone can register and gets `DEFAULT_ROLE` (default `guest`).
-- **Roles** control the bookmark quota: `guest` = 10 bookmarks, `user` = 500, `admin` = unlimited (adjust with `ROLE_QUOTAS`, or set `DISABLE_QUOTAS=true` to remove all limits). To create invites or change roles, set `ADMIN_USER_IDS` to your account's user ID (see `GET /api/auth/me`).
-- **Create an invite** (from an admin account): `POST /api/admin/invite` with `{ "role": "user" }`. The response contains a shareable link. Invitees sign up themselves and set their own password; no email service required.
-- **Email is optional**: without `RESEND_API_KEY`, private invites fall back to manual link sharing, and password-reset links are printed to the console in development only.
+- **Roles** control the bookmark quota: `guest` = 10 bookmarks, `user` = 500, `admin` = unlimited (adjust with `ROLE_QUOTAS`, or set `DISABLE_QUOTAS=true` to remove all limits).
+- **Becoming admin**: sign up, then put your user ID (`GET /api/auth/me`) in `ADMIN_USER_IDS` and restart. Admins can promote other admins from the admin panel; `ADMIN_USER_IDS` accounts can't be demoted there.
+- **Admin panel**: in the extension, **Settings → Account → Admin panel** (admins only). It shows usage stats and lets you search users, change roles, reset passwords, ban/unban, sign a user out everywhere, delete accounts (with all their data), and create, copy and revoke invites. The same actions are available as a JSON API under `/api/admin` (`stats`, `users`, `users/:id/{role,password,ban,unban,revoke-sessions}`, `DELETE users/:id`, `invites`, `DELETE invites/:code`).
+- **Invites**: an invite has a role, a number of uses and an expiry, and optionally an email address it is restricted to (and emailed to, which needs `RESEND_API_KEY`). Share the invite link `<BETTER_AUTH_URL>/invite/<code>`: it explains how to install the extension and which server URL to use. New users paste the code (or the link) into the **Invite code** field when signing up; existing accounts redeem it under **Settings → Account**, which only ever raises their role. In `invite-only` mode a valid code is required to create an account (Google sign-in can't create new accounts in this mode). Set `EXTENSION_INSTALL_URL` to your Chrome Web Store link to show it on the invite page.
+- **Email is optional**: without `RESEND_API_KEY`, share invite links yourself; password-reset links are printed to the console in development only (an admin can set a new password from the admin panel instead).
 - **Google sign-in**: configure the `OAUTH_GOOGLE_*` variables and add the redirect URI `<BETTER_AUTH_URL>/api/auth/callback/google` to a *Web application* OAuth client. The extension's `chromiumapp.org` redirect is handled by the server and does not need to be registered with Google. See [docs/deployment.md](docs/deployment.md#4-optional-google-sign-in).
 - **Privacy policy**: every server serves one at `/privacy` (template in [docs/privacy-policy.md](docs/privacy-policy.md)).
 
