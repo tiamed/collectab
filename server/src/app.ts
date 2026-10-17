@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
@@ -27,9 +28,10 @@ type NodeBindings = { incoming?: { socket?: { remoteAddress?: string } } };
 export function clientIpFor(headers: Headers, remoteAddress: string | undefined, trustProxy: boolean): string | null {
   if (trustProxy) {
     const real = headers.get('x-real-ip')?.trim();
-    if (real) return real;
+    if (real && isIP(real)) return real;
     const hops = headers.get('x-forwarded-for')?.split(',').map((h) => h.trim()).filter(Boolean);
-    if (hops?.length) return hops[hops.length - 1];
+    const last = hops?.[hops.length - 1];
+    if (last && isIP(last)) return last;
   }
   return remoteAddress ?? null;
 }

@@ -154,5 +154,6 @@ describe('clientIpFor', () => {
     expect(clientIpFor(h({ 'x-real-ip': '1.1.1.1', 'x-forwarded-for': '9.9.9.9, 2.2.2.2' }), '10.0.0.1', true)).toBe('1.1.1.1');
     expect(clientIpFor(h({ 'x-forwarded-for': 'spoofed, 2.2.2.2' }), '10.0.0.1', true)).toBe('2.2.2.2');
     expect(clientIpFor(h({}), '10.0.0.1', true)).toBe('10.0.0.1');
+    expect(clientIpFor(h({ 'x-real-ip': '9.9.9.12345' }), '10.0.0.1', true)).toBe('10.0.0.1');
   });
 });
