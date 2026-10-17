@@ -1,46 +1,34 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { eq, and, asc, sql, count } from 'drizzle-orm';
+import { eq, asc, sql, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../database/client.js';
-import { bookmarks, collections, spaces, organizations, orgMembers, spaceMembers } from '../../database/schema.js';
+import { bookmarks, collections, spaces } from '../../database/schema.js';
 import { authMiddleware, type AuthEnv } from '../middleware/auth.js';
-import { canEditSpace } from './permissions.js';
+import { canEditSpace, hasSpaceAccess } from './permissions.js';
+import { invalidateSpace } from '../../server/space-invalidate.js';
 import { getQuotaForRole } from '../../auth/quota.js';
 
+async function spaceIdForCollection(
+  db: ReturnType<typeof getDb>,
+  collectionId: string,
+): Promise<string | null> {
+  const [col] = await db
+    .select({ spaceId: collections.spaceId })
+    .from(collections)
+    .where(eq(collections.id, collectionId));
+  return col?.spaceId ?? null;
+}
 async function hasCollectionAccess(db: ReturnType<typeof getDb>, collectionId: string, userId: string): Promise<boolean> {
   const [col] = await db.select().from(collections).where(eq(collections.id, collectionId));
   if (!col) return false;
-  if (col.ownerId === userId) return true;
-
   const [space] = await db.select().from(spaces).where(eq(spaces.id, col.spaceId));
-  if (!space?.orgId) return false;
-
-  const [org] = await db.select().from(organizations).where(eq(organizations.id, space.orgId));
-  if (org?.ownerId === userId) return true;
-
-  const [membership] = await db.select().from(orgMembers)
-    .where(and(eq(orgMembers.orgId, space.orgId), eq(orgMembers.userId, userId)));
-  return !!membership;
+  return hasSpaceAccess(db, space, userId);
 }
 
-async function hasSpaceAccess(db: ReturnType<typeof getDb>, spaceId: string, userId: string): Promise<boolean> {
+async function spaceHasAccess(db: ReturnType<typeof getDb>, spaceId: string, userId: string): Promise<boolean> {
   const [space] = await db.select().from(spaces).where(eq(spaces.id, spaceId));
-  if (!space) return false;
-  if (space.ownerId === userId) return true;
-
-  const [sm] = await db.select().from(spaceMembers)
-    .where(and(eq(spaceMembers.spaceId, spaceId), eq(spaceMembers.userId, userId)));
-  if (sm) return true;
-
-  if (!space.orgId) return false;
-
-  const [org] = await db.select().from(organizations).where(eq(organizations.id, space.orgId));
-  if (org?.ownerId === userId) return true;
-
-  const [membership] = await db.select().from(orgMembers)
-    .where(and(eq(orgMembers.orgId, space.orgId), eq(orgMembers.userId, userId)));
-  return !!membership;
+  return hasSpaceAccess(db, space, userId);
 }
 
 /** Resolve collection → space and require owner|editor for writes */
@@ -143,7 +131,7 @@ bookmarkRoutes.get('/', async (c) => {
   }
 
   if (spaceId) {
-    if (!(await hasSpaceAccess(db, spaceId, userId))) {
+    if (!(await spaceHasAccess(db, spaceId, userId))) {
       return c.json({ error: 'Space not found' }, 404);
     }
 
@@ -224,6 +212,9 @@ bookmarkRoutes.put('/reorder', zValidator('json', reorderSchema), async (c) => {
         .where(eq(bookmarks.id, bookmarkIds[i]));
     }
   });
+
+  const spaceId = await spaceIdForCollection(db, collectionId);
+  if (spaceId) await invalidateSpace(spaceId);
 
   return c.json({ success: true });
 });
@@ -316,6 +307,10 @@ bookmarkRoutes.put('/:id', zValidator('json', updateSchema), async (c) => {
     }
   }
 
+  const placementChanged =
+    (body.orderIndex !== undefined && body.orderIndex !== existing.orderIndex) ||
+    (body.collectionId !== undefined && body.collectionId !== existing.collectionId);
+
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.title !== undefined) updates.title = body.title;
   if (body.url !== undefined) updates.url = body.url;
@@ -326,6 +321,18 @@ bookmarkRoutes.put('/:id', zValidator('json', updateSchema), async (c) => {
   if (body.collectionId !== undefined) updates.collectionId = body.collectionId;
 
   const [updated] = await db.update(bookmarks).set(updates).where(eq(bookmarks.id, id)).returning();
+
+  if (placementChanged) {
+    const spaceIds = new Set<string>();
+    const fromSpace = await spaceIdForCollection(db, existing.collectionId);
+    if (fromSpace) spaceIds.add(fromSpace);
+    if (body.collectionId && body.collectionId !== existing.collectionId) {
+      const toSpace = await spaceIdForCollection(db, body.collectionId);
+      if (toSpace) spaceIds.add(toSpace);
+    }
+    for (const sid of spaceIds) await invalidateSpace(sid);
+  }
+
   return c.json({ bookmark: updated });
 });
 

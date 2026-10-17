@@ -21,3 +21,4 @@ Thumbs.db
 
 # Build artifacts
 extension/web-ext-artifacts/
+.opencode

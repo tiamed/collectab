@@ -76,12 +76,18 @@ function SortableSpaceRow({
             ? 'bg-[var(--surface)] text-[var(--foreground)]'
             : 'text-[var(--muted)] hover:bg-[var(--surface)]'
         }`}
+        title={space.isShared && space.ownerName ? `${space.name} (from ${space.ownerName})` : undefined}
         onClick={(e) => { e.stopPropagation(); onSelect(); }}
       >
         <span className="flex size-3.5 items-center justify-center">
           <IconDisplay icon={space.icon} fallback="●" className="text-xs leading-none" imgClassName="size-3.5 rounded-sm object-contain" />
         </span>
-        <span className="text-xs">{space.name}</span>
+        <span className="min-w-0 flex-1 truncate text-xs">
+          {space.name}
+          {space.isShared && space.ownerName && (
+            <span className="text-[var(--muted)]"> (from {space.ownerName})</span>
+          )}
+        </span>
       </button>
       {canManage && (
         <button

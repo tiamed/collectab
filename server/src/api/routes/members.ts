@@ -32,17 +32,7 @@ memberRoutes.get('/:spaceId', async (c) => {
 
   const role = await getEffectiveRole(db, space, userId);
   if (!role) {
-    // Fall back: org members can still see the member list (read inheritance)
-    if (space.orgId) {
-      const [org] = await db.select().from(organizations).where(eq(organizations.id, space.orgId));
-      const [membership] = await db.select().from(orgMembers)
-        .where(and(eq(orgMembers.orgId, space.orgId), eq(orgMembers.userId, userId)));
-      if (!org || (org.ownerId !== userId && !membership)) {
-        return c.json({ error: 'Space not found' }, 404);
-      }
-    } else {
-      return c.json({ error: 'Space not found' }, 404);
-    }
+    return c.json({ error: 'Space not found' }, 404);
   }
 
   const members = await db

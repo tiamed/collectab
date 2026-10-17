@@ -21,5 +21,13 @@ export default defineConfig({
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
     },
+    browser_specific_settings: {
+      gecko: {
+        id: 'collectab@tiamed.io',
+        data_collection_permissions: {
+          required: ['bookmarksInfo', 'browsingActivity', 'authenticationInfo'],
+        },
+      },
+    },
   },
 });

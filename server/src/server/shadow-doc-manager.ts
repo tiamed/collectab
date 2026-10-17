@@ -2,7 +2,6 @@ import { LoroDoc } from 'loro-crdt';
 import { eq, asc } from 'drizzle-orm';
 import { getDb } from '../database/client.js';
 import { collections, bookmarks } from '../database/schema.js';
-import type { SnapshotStore } from './snapshot-store.js';
 
 interface ShadowRoom {
   doc: LoroDoc;
@@ -16,9 +15,6 @@ interface ShadowRoom {
  */
 export class ShadowDocManager {
   private rooms = new Map<string, ShadowRoom>();
-  private snapshotTimer: ReturnType<typeof setInterval> | null = null;
-  private updateCounters = new Map<string, number>();
-  private snapshotStore: SnapshotStore | null = null;
 
   /**
    * Cold start from DB. Unique place that may mutate the doc.
@@ -77,10 +73,16 @@ export class ShadowDocManager {
     return result;
   }
 
+  /** In-memory Loro export for WS clients — not persisted to DB. */
   getSnapshot(spaceId: string): Uint8Array | null {
     const doc = this.getDocIfLoaded(spaceId);
     if (!doc) return null;
     return doc.export({ mode: 'snapshot' });
+  }
+
+  /** Drop in-memory room so next getOrCreate re-seeds from SQL. */
+  evict(spaceId: string): void {
+    this.rooms.delete(spaceId);
   }
 
   cleanStaleRooms(maxAgeMs = 30 * 60 * 1000): void {
@@ -88,47 +90,5 @@ export class ShadowDocManager {
     for (const [id, room] of this.rooms) {
       if (now - room.lastAccessed > maxAgeMs) this.rooms.delete(id);
     }
-  }
-
-  startAutoSnapshot(store: SnapshotStore, intervalMs = 30000, maxUpdates = 100): void {
-    this.snapshotStore = store;
-    this.snapshotTimer = setInterval(() => {
-      void this.flushSnapshots();
-    }, intervalMs);
-
-    const orig = this.importUpdate.bind(this);
-    this.importUpdate = async (spaceId, update) => {
-      await orig(spaceId, update);
-      const c = (this.updateCounters.get(spaceId) || 0) + 1;
-      this.updateCounters.set(spaceId, c);
-      if (c >= maxUpdates) {
-        this.updateCounters.set(spaceId, 0);
-        await this.saveSingleSnapshot(spaceId);
-      }
-    };
-  }
-
-  stopAutoSnapshot(): void {
-    if (this.snapshotTimer) {
-      clearInterval(this.snapshotTimer);
-      this.snapshotTimer = null;
-    }
-  }
-
-  private async flushSnapshots() {
-    if (!this.snapshotStore) return;
-    for (const [spaceId] of this.rooms) {
-      try {
-        await this.saveSingleSnapshot(spaceId);
-      } catch (err) {
-        console.error(`Failed to save CRDT snapshot for space ${spaceId}:`, err);
-      }
-    }
-  }
-
-  private async saveSingleSnapshot(spaceId: string) {
-    if (!this.snapshotStore) return;
-    const snap = this.getSnapshot(spaceId);
-    if (snap) await this.snapshotStore.saveSnapshot(spaceId, snap);
   }
 }

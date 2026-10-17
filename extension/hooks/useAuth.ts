@@ -26,7 +26,9 @@ export function useAuth(ready: boolean, initialUser: api.User | null = null) {
       if (u) {
         setUser(u);
         setCachedUser(u);
-      } else {
+      } else if (!api.isLoggedIn()) {
+        // Auth actually invalidated (refresh 401 cleared tokens). Network
+        // failures return null from getMe but keep the token — retain cache.
         setUser(null);
         setCachedUser(null);
       }

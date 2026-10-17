@@ -1,5 +1,7 @@
 /** Cross-context signal: popup (or any page) → open newtab refreshes bookmarks. */
 
+import { browser } from 'wxt/browser';
+
 export const BOOKMARKS_CHANGED_KEY = 'bookmarks_changed_v1';
 
 export type BookmarksChangedEvent = {
@@ -12,20 +14,21 @@ export type BookmarksChangedEvent = {
 export async function notifyBookmarksChanged(
   event: Omit<BookmarksChangedEvent, 'at'> = {},
 ): Promise<void> {
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
-  await chrome.storage.local.set({
-    [BOOKMARKS_CHANGED_KEY]: { ...event, at: Date.now() } satisfies BookmarksChangedEvent,
-  }).catch(() => {});
+  try {
+    await browser.storage.local.set({
+      [BOOKMARKS_CHANGED_KEY]: { ...event, at: Date.now() } satisfies BookmarksChangedEvent,
+    });
+  } catch {}
 }
 
 /** Subscribe to bookmark mutations from other extension pages. */
 export function subscribeBookmarksChanged(
   listener: (event: BookmarksChangedEvent) => void,
 ): () => void {
-  if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return () => {};
+  if (typeof browser === 'undefined' || !browser.storage?.onChanged) return () => {};
 
   const handler = (
-    changes: { [key: string]: chrome.storage.StorageChange },
+    changes: { [key: string]: { newValue?: unknown; oldValue?: unknown } },
     areaName: string,
   ) => {
     if (areaName !== 'local') return;
@@ -34,6 +37,6 @@ export function subscribeBookmarksChanged(
     listener(change.newValue as BookmarksChangedEvent);
   };
 
-  chrome.storage.onChanged.addListener(handler);
-  return () => chrome.storage.onChanged.removeListener(handler);
+  browser.storage.onChanged.addListener(handler);
+  return () => browser.storage.onChanged.removeListener(handler);
 }

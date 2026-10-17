@@ -413,6 +413,18 @@ export default function ContentArea({
     );
   }
 
+  const collectionIds = new Set(collections.map((c) => c.id));
+  const bookmarkKeys = Object.keys(bookmarksByCollection);
+  const bookmarksFromOtherSpace =
+    bookmarkKeys.length > 0 && !bookmarkKeys.some((k) => collectionIds.has(k));
+  if (loading && bookmarksFromOtherSpace) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <span className="text-sm text-[var(--muted)]">Loading...</span>
+      </div>
+    );
+  }
+
   if (collections.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">

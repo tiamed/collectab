@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import * as api from '@/lib/api';
 import {
   ensureDataCacheLoaded,
+  isDataCacheLoaded,
   getCachedOrganizations,
   setCachedOrganizations,
   getCachedSpaces,
@@ -13,6 +14,11 @@ import {
   setCachedBookmarksForCollection,
 } from '@/lib/dataCache';
 import { subscribeBookmarksChanged } from '@/lib/bookmarksSync';
+import { isAbortError } from '@/lib/serverReachability';
+
+async function whenCacheReady() {
+  if (!isDataCacheLoaded()) await ensureDataCacheLoaded();
+}
 
 export function useOrganizations(enabled = true) {
   const [orgs, setOrgs] = useState<api.Organization[]>([]);
@@ -21,7 +27,7 @@ export function useOrganizations(enabled = true) {
   const fetch = useCallback(async () => {
     if (!enabled) return;
 
-    await ensureDataCacheLoaded();
+    await whenCacheReady();
     const cached = getCachedOrganizations();
     if (cached) {
       setOrgs(cached);
@@ -56,7 +62,7 @@ export function useSpaces(orgId?: string | null, enabled = true) {
   const fetch = useCallback(async () => {
     if (!enabled) return;
 
-    await ensureDataCacheLoaded();
+    await whenCacheReady();
     const cached = getCachedSpaces(cacheKey);
     if (cached) {
       setSpaces(cached);
@@ -87,15 +93,24 @@ export function useCollections(spaceId: string | null, enabled = true) {
   const [collections, setCollections] = useState<api.Collection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetch = useCallback(async () => {
+    abortRef.current?.abort();
+
     if (!enabled || !spaceId) {
+      abortRef.current = null;
       setCollections([]);
       setLoading(false);
       return;
     }
 
-    await ensureDataCacheLoaded();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    await whenCacheReady();
+    if (ac.signal.aborted) return;
+
     const cached = getCachedCollections(spaceId);
     if (cached) {
       setCollections(cached);
@@ -107,18 +122,32 @@ export function useCollections(spaceId: string | null, enabled = true) {
 
     setError(null);
     try {
-      const data = await api.getCollections(spaceId);
+      const data = await api.getCollections(spaceId, ac.signal);
+      if (ac.signal.aborted) return;
       setCachedCollections(spaceId, data);
       setCollections(data);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      if (isAbortError(e) || ac.signal.aborted) return;
+      setError(e instanceof Error ? e.message : String(e));
       if (!cached) setCollections([]);
     } finally {
+      if (!ac.signal.aborted) setLoading(false);
+    }
+  }, [spaceId, enabled]);
+
+  useLayoutEffect(() => {
+    if (!enabled || !spaceId || !isDataCacheLoaded()) return;
+    const cached = getCachedCollections(spaceId);
+    if (cached) {
+      setCollections(cached);
       setLoading(false);
     }
   }, [spaceId, enabled]);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => {
+    void fetch();
+    return () => abortRef.current?.abort();
+  }, [fetch]);
 
   return { collections, loading, error, refetch: fetch };
 }
@@ -167,49 +196,67 @@ export function useBookmarks(collectionId: string | null) {
 export function useCollectionBookmarks(spaceId: string | null) {
   const [data, setData] = useState<Record<string, api.Bookmark[]>>({});
   const [loading, setLoading] = useState(false);
-  const fetchGenRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const mutateEpochRef = useRef(0);
 
   /** Drop in-flight GET results so they cannot overwrite local mutations. */
   const bumpFetchGen = useCallback(() => {
-    fetchGenRef.current += 1;
+    mutateEpochRef.current += 1;
   }, []);
 
   const fetch = useCallback(async (_force = false) => {
+    abortRef.current?.abort();
+
     if (!spaceId) {
+      abortRef.current = null;
       setData({});
       setLoading(false);
       return;
     }
 
-    await ensureDataCacheLoaded();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const epoch = mutateEpochRef.current;
+
+    await whenCacheReady();
+    if (ac.signal.aborted) return;
+
     const cached = getCachedBookmarksBySpace(spaceId);
     if (cached) {
       setData(cached);
       setLoading(false);
     } else {
+      setData({});
       setLoading(true);
     }
 
-    const gen = ++fetchGenRef.current;
     try {
-      const byCollection = await api.getBookmarksBySpace(spaceId);
-      if (gen !== fetchGenRef.current) return;
-
-      setCachedBookmarksBySpace(spaceId, byCollection);
-      setData(byCollection);
-    } catch {
+      const byCollection = await api.getBookmarksBySpace(spaceId, ac.signal);
+      if (ac.signal.aborted) return;
+      if (mutateEpochRef.current === epoch) {
+        setCachedBookmarksBySpace(spaceId, byCollection);
+        setData(byCollection);
+      }
+    } catch (e: unknown) {
+      if (isAbortError(e) || ac.signal.aborted) return;
       // keep previous / cached data on failure
     } finally {
-      if (gen === fetchGenRef.current) setLoading(false);
+      if (!ac.signal.aborted) setLoading(false);
+    }
+  }, [spaceId]);
+
+  useLayoutEffect(() => {
+    if (!spaceId || !isDataCacheLoaded()) return;
+    const cached = getCachedBookmarksBySpace(spaceId);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
     }
   }, [spaceId]);
 
   useEffect(() => {
     void fetch();
-  }, [fetch]);
-
-  useEffect(() => {
-    void fetch();
+    return () => abortRef.current?.abort();
   }, [fetch]);
 
   // Popup (and other pages) signal via chrome.storage — refetch when relevant.

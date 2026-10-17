@@ -59,12 +59,12 @@ export default function App() {
         }
       }
 
-      const stored = await chrome.storage.local.get([
+      const stored = (await browser.storage.local.get([
         STORAGE_KEY_ORG,
         STORAGE_KEY_LAST_SPACE,
         STORAGE_KEY_LAST_COLLECTION,
-      ]);
-      const orgId = stored[STORAGE_KEY_ORG] || null;
+      ])) as Record<string, string | undefined>;
+      const orgId = (stored[STORAGE_KEY_ORG] as string | undefined) || null;
       setSelectedOrgId(orgId);
 
       const [fetchedOrgs, fetchedSpaces] = await Promise.all([
@@ -105,17 +105,17 @@ export default function App() {
     setSelectedCollectionId(null);
     setCollections([]);
 
-    if (id) await chrome.storage.local.set({ [STORAGE_KEY_ORG]: id });
-    else await chrome.storage.local.remove(STORAGE_KEY_ORG);
+    if (id) await browser.storage.local.set({ [STORAGE_KEY_ORG]: id });
+    else await browser.storage.local.remove(STORAGE_KEY_ORG);
 
     const fetchedSpaces = await getSpaces(id).catch(() => []);
     setSpaces(fetchedSpaces);
     if (fetchedSpaces.length > 0) {
-      const stored = await chrome.storage.local.get([
+      const stored = (await browser.storage.local.get([
         STORAGE_KEY_LAST_SPACE,
         STORAGE_KEY_LAST_COLLECTION,
-      ]);
-      const lastSpaceId = stored[STORAGE_KEY_LAST_SPACE];
+      ])) as Record<string, string | undefined>;
+      const lastSpaceId = stored[STORAGE_KEY_LAST_SPACE] as string | undefined;
       const spaceId =
         lastSpaceId && fetchedSpaces.some((s) => s.id === lastSpaceId)
           ? lastSpaceId
@@ -123,7 +123,7 @@ export default function App() {
       setSelectedSpaceId(spaceId);
       const cols = await getCollections(spaceId).catch(() => []);
       setCollections(cols);
-      const lastCol = stored[STORAGE_KEY_LAST_COLLECTION];
+      const lastCol = stored[STORAGE_KEY_LAST_COLLECTION] as string | undefined;
       if (lastCol && cols.some((c) => c.id === lastCol)) {
         setSelectedCollectionId(lastCol);
       } else if (cols.length > 0) {
@@ -135,12 +135,15 @@ export default function App() {
   async function handleSpaceChange(spaceId: string) {
     setSelectedSpaceId(spaceId);
     setSelectedCollectionId(null);
-    await chrome.storage.local.set({ [STORAGE_KEY_LAST_SPACE]: spaceId });
+    await browser.storage.local.set({ [STORAGE_KEY_LAST_SPACE]: spaceId });
     const cols = await getCollections(spaceId).catch(() => []);
     setCollections(cols);
     if (cols.length > 0) {
-      const stored = await chrome.storage.local.get([STORAGE_KEY_LAST_COLLECTION]);
-      const lastCol = stored[STORAGE_KEY_LAST_COLLECTION];
+      const stored = (await browser.storage.local.get([STORAGE_KEY_LAST_COLLECTION])) as Record<
+        string,
+        string | undefined
+      >;
+      const lastCol = stored[STORAGE_KEY_LAST_COLLECTION] as string | undefined;
       if (lastCol && cols.some((c) => c.id === lastCol)) {
         setSelectedCollectionId(lastCol);
       } else {
@@ -152,7 +155,7 @@ export default function App() {
   async function handleCollectionChange(collectionId: string) {
     setSelectedCollectionId(collectionId);
     if (collectionId) {
-      await chrome.storage.local.set({ [STORAGE_KEY_LAST_COLLECTION]: collectionId });
+      await browser.storage.local.set({ [STORAGE_KEY_LAST_COLLECTION]: collectionId });
     }
   }
 
@@ -171,7 +174,7 @@ export default function App() {
         spaceId: selectedSpaceId,
         collectionId: selectedCollectionId,
       });
-      await chrome.storage.local.set({ [STORAGE_KEY_LAST_COLLECTION]: selectedCollectionId });
+      await browser.storage.local.set({ [STORAGE_KEY_LAST_COLLECTION]: selectedCollectionId });
       setSaved(true);
       setTimeout(() => window.close(), 800);
     } catch (err: any) {
@@ -270,7 +273,9 @@ export default function App() {
             >
               {spaces.length === 0 && <option value="">No spaces</option>}
               {spaces.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
+                <option key={s.id} value={s.id}>
+                  {s.isShared && s.ownerName ? `${s.name} (from ${s.ownerName})` : s.name}
+                </option>
               ))}
             </select>
             <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-[var(--muted)]" />

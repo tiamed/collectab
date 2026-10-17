@@ -1,4 +1,11 @@
 import { clearDataCache, hasCachedData } from './dataCache';
+import {
+  configureHealthUrl,
+  isAbortError,
+  isNetworkFailure,
+  reportServerReachable,
+  reportServerUnreachable,
+} from './serverReachability';
 
 const STORAGE_KEY_BASE_URL = 'api_base_url';
 const STORAGE_KEY_ACCESS_TOKEN = 'access_token';
@@ -14,13 +21,18 @@ const DEFAULT_API_BASE = 'http://localhost:3001/api';
 let apiBase: string = DEFAULT_API_BASE;
 let accessToken: string | null = null;
 
+configureHealthUrl(() => apiBase.replace(/\/api\/?$/, '') + '/health');
+
 export async function loadApiBase() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_BASE_URL, STORAGE_KEY_ACCESS_TOKEN]);
+  const stored = (await browser.storage.local.get([STORAGE_KEY_BASE_URL, STORAGE_KEY_ACCESS_TOKEN])) as Record<
+    string,
+    string | undefined
+  >;
   if (stored[STORAGE_KEY_BASE_URL]) {
-    apiBase = stored[STORAGE_KEY_BASE_URL];
+    apiBase = stored[STORAGE_KEY_BASE_URL] as string;
   }
   if (stored[STORAGE_KEY_ACCESS_TOKEN]) {
-    accessToken = stored[STORAGE_KEY_ACCESS_TOKEN];
+    accessToken = stored[STORAGE_KEY_ACCESS_TOKEN] as string;
   }
 }
 
@@ -32,18 +44,18 @@ export async function setApiBase(url: string): Promise<{ changed: boolean; hadSe
   const next = url.replace(/\/+$/, '');
   const changed = next !== apiBase;
   apiBase = next;
-  await chrome.storage.local.set({ [STORAGE_KEY_BASE_URL]: apiBase });
+  await browser.storage.local.set({ [STORAGE_KEY_BASE_URL]: apiBase });
 
   let hadSession = false;
   if (changed) {
-    const before = await chrome.storage.local.get([
+    const before = (await browser.storage.local.get([
       STORAGE_KEY_ACCESS_TOKEN,
       ...SESSION_UI_KEYS,
-    ]);
+    ])) as Record<string, string | undefined>;
     hadSession = !!before[STORAGE_KEY_ACCESS_TOKEN] || SESSION_UI_KEYS.some((k) => before[k]) || hasCachedData();
     await clearTokens();
     await clearDataCache();
-    await chrome.storage.local.remove([...SESSION_UI_KEYS]);
+    await browser.storage.local.remove([...SESSION_UI_KEYS]);
   }
 
   return { changed, hadSession };
@@ -63,12 +75,23 @@ export function isLoggedIn() {
 
 async function persistToken(access: string) {
   accessToken = access;
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCESS_TOKEN]: access });
+  await browser.storage.local.set({ [STORAGE_KEY_ACCESS_TOKEN]: access });
 }
 
 async function clearTokens() {
   accessToken = null;
-  await chrome.storage.local.remove([STORAGE_KEY_ACCESS_TOKEN]);
+  await browser.storage.local.remove([STORAGE_KEY_ACCESS_TOKEN]);
+}
+
+async function trackedFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    const res = await fetch(url, init);
+    reportServerReachable();
+    return res;
+  } catch (e) {
+    if (!isAbortError(e) && isNetworkFailure(e)) reportServerUnreachable();
+    throw e;
+  }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -80,7 +103,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  const res = await fetch(`${apiBase}${path}`, { ...options, headers });
+  const res = await trackedFetch(`${apiBase}${path}`, { ...options, headers });
 
   if (res.status === 204) return undefined as T;
 
@@ -146,9 +169,9 @@ export async function loginWithGoogle(): Promise<{ user: User }> {
   // Launch the OAuth flow in a secure browser context (MV3 extensions cannot
   // be redirected, so chrome.identity is the sanctioned path).
   const redirectUrl = await new Promise<string>((resolve, reject) => {
-    chrome.identity.launchWebAuthFlow({ url, interactive: true }, (callbackUrl) => {
-      if (chrome.runtime.lastError || !callbackUrl) {
-        reject(new Error(chrome.runtime.lastError?.message || 'Google login cancelled'));
+    browser.identity.launchWebAuthFlow({ url, interactive: true }, (callbackUrl) => {
+      if (browser.runtime.lastError || !callbackUrl) {
+        reject(new Error(browser.runtime.lastError?.message || 'Google login cancelled'));
       } else {
         resolve(callbackUrl);
       }
@@ -256,6 +279,9 @@ export interface Space {
   ownerId: string;
   orgId?: string | null;
   createdAt: string;
+  isShared?: boolean;
+  ownerName?: string;
+  myRole?: 'owner' | 'editor' | 'viewer' | null;
 }
 
 export async function getSpaces(orgId?: string | null): Promise<Space[]> {
@@ -302,9 +328,12 @@ export interface Collection {
   updatedAt: string;
 }
 
-export async function getCollections(spaceId?: string): Promise<Collection[]> {
+export async function getCollections(spaceId?: string, signal?: AbortSignal): Promise<Collection[]> {
   const query = spaceId ? `?spaceId=${spaceId}` : '';
-  const data = await request<{ collections: Collection[] }>(`/collections${query}`);
+  const data = await request<{ collections: Collection[] }>(
+    `/collections${query}`,
+    signal ? { signal } : {},
+  );
   return data.collections;
 }
 
@@ -354,9 +383,13 @@ export async function getBookmarks(collectionId: string): Promise<Bookmark[]> {
   return data.bookmarks;
 }
 
-export async function getBookmarksBySpace(spaceId: string): Promise<Record<string, Bookmark[]>> {
+export async function getBookmarksBySpace(
+  spaceId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, Bookmark[]>> {
   const data = await request<{ bookmarksByCollection: Record<string, Bookmark[]> }>(
     `/bookmarks?spaceId=${encodeURIComponent(spaceId)}`,
+    signal ? { signal } : {},
   );
   return data.bookmarksByCollection;
 }

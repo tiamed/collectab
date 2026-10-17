@@ -17,9 +17,10 @@ export type SpaceRow = {
  *
  * Order:
  *  1. Personal space: ownerId match → owner; else space_members → editor/viewer/null
- *  2. Org space: org.ownerId match → owner
+ *  2. Org space: org.ownerId match → owner (sees every space in the org)
  *  3. Space creator (ownerId) → owner
  *  4. space_members lookup → editor/viewer/null
+ * Org admin/member with no space_members row has no access.
  */
 export async function getEffectiveRole(
   db: Db,
@@ -79,4 +80,13 @@ export async function canEditSpace(
 ): Promise<boolean> {
   const role = await getEffectiveRole(db, space, userId);
   return role === 'owner' || role === 'editor';
+}
+
+/** Any non-null space role may list/read the space. */
+export async function hasSpaceAccess(
+  db: Db,
+  space: SpaceRow | null | undefined,
+  userId: string,
+): Promise<boolean> {
+  return (await getEffectiveRole(db, space, userId)) !== null;
 }

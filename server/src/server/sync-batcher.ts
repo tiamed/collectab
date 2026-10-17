@@ -2,72 +2,109 @@ import type pg from 'pg';
 import { getPool } from '../database/client.js';
 import type { ShadowDocManager } from './shadow-doc-manager.js';
 
+interface PendingTimers {
+  trailing: ReturnType<typeof setTimeout> | null;
+  maxWait: ReturnType<typeof setTimeout> | null;
+}
+
 /**
- * Debounced batch writer: CRDT list order → bookmarks.order_index.
- * Uses a single VALUES update, not row-by-row loops.
+ * Debounced batch writer: CRDT list order → bookmarks.order_index / collection_id.
+ * Trailing quiet window + maxWait ceiling so continuous edits still flush.
  */
 export class SyncBatcher {
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pending = new Map<string, PendingTimers>();
 
   constructor(
     private mgr: ShadowDocManager,
     private debounceMs = 500,
     private poolGetter: () => pg.Pool = getPool,
+    private maxWaitMs = 2000,
   ) {}
 
   notifyChange(spaceId: string): void {
-    const existing = this.timers.get(spaceId);
-    if (existing) clearTimeout(existing);
-    this.timers.set(spaceId, setTimeout(() => void this.flush(spaceId), this.debounceMs));
+    let entry = this.pending.get(spaceId);
+    if (!entry) {
+      entry = { trailing: null, maxWait: null };
+      this.pending.set(spaceId, entry);
+    }
+
+    if (entry.trailing) clearTimeout(entry.trailing);
+    entry.trailing = setTimeout(() => void this.flush(spaceId), this.debounceMs);
+
+    if (!entry.maxWait && this.maxWaitMs > 0) {
+      entry.maxWait = setTimeout(() => void this.flush(spaceId), this.maxWaitMs);
+    }
+  }
+
+  private clearTimers(spaceId: string): void {
+    const entry = this.pending.get(spaceId);
+    if (!entry) return;
+    if (entry.trailing) clearTimeout(entry.trailing);
+    if (entry.maxWait) clearTimeout(entry.maxWait);
+    this.pending.delete(spaceId);
   }
 
   private async flush(spaceId: string): Promise<void> {
-    this.timers.delete(spaceId);
+    this.clearTimers(spaceId);
 
     const doc = this.mgr.getDocIfLoaded(spaceId);
     if (!doc) return;
 
     const pool = this.poolGetter();
-    const colResult = await pool.query(
-      'SELECT id FROM collections WHERE space_id = $1 ORDER BY order_index',
-      [spaceId],
-    );
-    const colIds: string[] = colResult.rows.map((r: { id: string }) => r.id);
-    if (colIds.length === 0) return;
-
-    const values: string[] = [];
-    const params: unknown[] = [];
-    let paramIdx = 1;
-
-    for (const colId of colIds) {
-      const list = doc.getList(colId);
-      for (let i = 0; i < list.length; i++) {
-        const id = list.get(i) as string;
-        values.push(`($${paramIdx}::uuid, $${paramIdx + 1}::uuid, $${paramIdx + 2}::int)`);
-        params.push(id, colId, i);
-        paramIdx += 3;
-      }
-    }
-
-    if (values.length === 0) return;
-
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
-        `UPDATE bookmarks SET order_index = -1
-         WHERE collection_id IN (SELECT id FROM collections WHERE space_id = $1)`,
+
+      const colResult = await client.query(
+        'SELECT id FROM collections WHERE space_id = $1 ORDER BY order_index',
         [spaceId],
       );
-      // The CRDT lists are the authority for membership AND ordering within a
-      // space. Setting collection_id here (not just order_index) means a
-      // cross-collection move persists even if only a CRDT op was relayed.
-      await client.query(
-        `UPDATE bookmarks AS b SET collection_id = v.collection_id, order_index = v.order_index
-         FROM (VALUES ${values.join(', ')}) AS v(id, collection_id, order_index)
-         WHERE b.id = v.id`,
-        params,
+      const colIds: string[] = colResult.rows.map((r: { id: string }) => r.id);
+      if (colIds.length === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const currentResult = await client.query(
+        `SELECT b.id, b.collection_id, b.order_index
+         FROM bookmarks b
+         INNER JOIN collections c ON c.id = b.collection_id
+         WHERE c.space_id = $1`,
+        [spaceId],
       );
+      const current = new Map<string, { collectionId: string; orderIndex: number }>();
+      for (const row of currentResult.rows as { id: string; collection_id: string; order_index: number }[]) {
+        current.set(row.id, { collectionId: row.collection_id, orderIndex: row.order_index });
+      }
+
+      const values: string[] = [];
+      const params: unknown[] = [];
+      let paramIdx = 1;
+
+      for (const colId of colIds) {
+        const list = doc.getList(colId);
+        for (let i = 0; i < list.length; i++) {
+          const id = list.get(i) as string;
+          const prev = current.get(id);
+          // Rows not in SQL yet: skip (doc-only); rows not in doc: never touched
+          if (!prev) continue;
+          if (prev.collectionId === colId && prev.orderIndex === i) continue;
+
+          values.push(`($${paramIdx}::uuid, $${paramIdx + 1}::uuid, $${paramIdx + 2}::int)`);
+          params.push(id, colId, i);
+          paramIdx += 3;
+        }
+      }
+
+      if (values.length > 0) {
+        await client.query(
+          `UPDATE bookmarks AS b SET collection_id = v.collection_id, order_index = v.order_index
+           FROM (VALUES ${values.join(', ')}) AS v(id, collection_id, order_index)
+           WHERE b.id = v.id`,
+          params,
+        );
+      }
+
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -78,11 +115,11 @@ export class SyncBatcher {
   }
 
   async flushNow(spaceId: string): Promise<void> {
-    const t = this.timers.get(spaceId);
-    if (t) {
-      clearTimeout(t);
-      this.timers.delete(spaceId);
-    }
     await this.flush(spaceId);
+  }
+
+  async flushPendingAll(): Promise<void> {
+    const ids = [...this.pending.keys()];
+    await Promise.all(ids.map((id) => this.flushNow(id)));
   }
 }
