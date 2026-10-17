@@ -18,5 +18,5 @@ export function getQuotaForRole(role: string | null | undefined): number | null 
   if (env.ROLE_QUOTAS && env.ROLE_QUOTAS[key] !== undefined) {
     return env.ROLE_QUOTAS[key];
   }
-  return DEFAULT_QUOTAS[key] ?? DEFAULT_QUOTAS.guest;
+  return key in DEFAULT_QUOTAS ? DEFAULT_QUOTAS[key] : DEFAULT_QUOTAS.guest;
 }
