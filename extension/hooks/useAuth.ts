@@ -27,7 +27,7 @@ export function useAuth(ready: boolean, initialUser: api.User | null = null) {
         setUser(u);
         setCachedUser(u);
       } else if (!api.isLoggedIn()) {
-        // Auth actually invalidated (refresh 401 cleared tokens). Network
+        // Auth actually invalidated (a 401 cleared the token). Network
         // failures return null from getMe but keep the token — retain cache.
         setUser(null);
         setCachedUser(null);
@@ -35,6 +35,22 @@ export function useAuth(ready: boolean, initialUser: api.User | null = null) {
       setLoading(false);
     });
   }, [ready, initialUser]);
+
+  useEffect(() => {
+    if (!ready) return;
+    return api.subscribeSession((loggedIn) => {
+      if (loggedIn) {
+        void api.getMe().then((u) => {
+          if (!u) return;
+          setUser(u);
+          setCachedUser(u);
+        });
+      } else {
+        setUser(null);
+        setCachedUser(null);
+      }
+    });
+  }, [ready]);
 
   const login = useCallback(async (email: string, password: string) => {
     const { user } = await api.login(email, password);

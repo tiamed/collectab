@@ -1,4 +1,4 @@
-import { getToken, getApiBase, loadApiBase } from './api';
+import { getToken, getApiBase, getMe, loadApiBase } from './api';
 
 type UpdateHandler = (update: Uint8Array) => void;
 
@@ -32,7 +32,7 @@ export class CrdtSyncClient {
     const token = getToken();
     if (!token) return;
 
-    const baseUrl = getApiBase() || 'http://localhost:3001/api';
+    const baseUrl = getApiBase();
     const wsBase = baseUrl.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
     this.connectTo(wsBase, token);
   }
@@ -56,13 +56,21 @@ export class CrdtSyncClient {
       }
     };
 
+    let opened = false;
+    this.ws.addEventListener('open', () => { opened = true; });
+
     this.ws.onclose = () => {
       this.ws = null;
-      if (this.shouldReconnect && this.reconnectAttempts < this.maxRetries) {
-        const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 15000);
-        this.reconnectAttempts++;
-        this.reconnectTimer = setTimeout(() => void this.doConnect(), delay);
-      }
+      if (!this.shouldReconnect || this.reconnectAttempts >= this.maxRetries) return;
+      const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 15000);
+      this.reconnectAttempts++;
+      this.reconnectTimer = setTimeout(() => {
+        // The server rejects bad sessions by dropping the upgrade, which looks
+        // the same as a network blip. When the socket never opened, validate
+        // the session over REST first: a 401 there clears the token and
+        // doConnect() then stops instead of retrying with a dead token.
+        void (opened ? Promise.resolve() : getMe()).then(() => this.doConnect());
+      }, delay);
     };
 
     this.ws.onerror = () => this.ws?.close();

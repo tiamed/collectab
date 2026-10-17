@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { X, Upload, Download, Shield } from 'lucide-react';
-import { getApiBase, setApiBase, importFromNiceTab, importFromToby, importNative, exportData } from '@/lib/api';
+import { DEFAULT_API_BASE, getApiBase, setApiBase, importFromNiceTab, importFromToby, importNative, exportData } from '@/lib/api';
 import type { User } from '@/lib/api';
 import { reportServerReachable, reportServerUnreachable } from '@/lib/serverReachability';
 
@@ -39,9 +39,9 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
     const timer = setTimeout(() => controller.abort(), 8000);
     const start = performance.now();
     try {
-      const trimmed = serverUrl.trim().replace(/\/+$/, '');
-      const { changed, hadSession } = await setApiBase(trimmed);
-      const res = await fetch(trimmed.replace(/\/api$/, '') + '/health', { signal: controller.signal });
+      const { changed, hadSession } = await setApiBase(serverUrl);
+      setServerUrl(getApiBase());
+      const res = await fetch(getApiBase().replace(/\/api$/, '') + '/health', { signal: controller.signal });
       if (res.ok) {
         reportServerReachable();
         setLatency(Math.round(performance.now() - start));
@@ -171,7 +171,7 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
               className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="http://localhost:3000/api"
+              placeholder={DEFAULT_API_BASE}
             />
             <div className="mt-2 flex items-center gap-2">
               <button
@@ -277,8 +277,17 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
           <div className="border-t border-[var(--border)] pt-4">
             <label className="mb-1 block text-[11px] font-medium text-[var(--muted)]">Account</label>
             <p className="text-[10px] text-[var(--muted)]">
-              Logged in via token stored in extension storage.
+              Signed in with a session token kept in this browser's extension storage. Sessions stay valid while
+              you use them and expire after a period of inactivity; signing out revokes them on the server.
             </p>
+            <a
+              href={`${getApiBase().replace(/\/api$/, '')}/privacy`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block text-[10px] text-[var(--accent)] hover:underline"
+            >
+              Privacy policy
+            </a>
           </div>
 
           {/* Danger zone */}
