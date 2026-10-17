@@ -59,11 +59,20 @@ export function useAuth(ready: boolean, initialUser: api.User | null = null) {
     return user;
   }, []);
 
-  const register = useCallback(async (email: string, password: string, name: string) => {
-    const { user } = await api.register(email, password, name);
+  const register = useCallback(async (email: string, password: string, name: string, inviteCode?: string) => {
+    const { user } = await api.register(email, password, name, inviteCode);
     setCachedUser(user);
     setUser(user);
     return user;
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const u = await api.getMe();
+    if (u) {
+      setUser(u);
+      setCachedUser(u);
+    }
+    return u;
   }, []);
 
   const loginWithGoogle = useCallback(async () => {
@@ -79,5 +88,5 @@ export function useAuth(ready: boolean, initialUser: api.User | null = null) {
     setUser(null);
   }, []);
 
-  return { user, loading, login, register, loginWithGoogle, logout, isLoggedIn: !!user };
+  return { user, loading, login, register, loginWithGoogle, logout, refreshUser, isLoggedIn: !!user };
 }

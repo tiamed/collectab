@@ -195,6 +195,7 @@ export interface User {
   name: string;
   avatarUrl?: string | null;
   role?: string | null;
+  isAdmin?: boolean;
 }
 
 export interface ServerAuthConfig {
@@ -237,9 +238,89 @@ export async function login(email: string, password: string): Promise<{ user: Us
   return signInRequest('/auth/sign-in/email', { email, password });
 }
 
-export async function register(email: string, password: string, name: string): Promise<{ user: User }> {
-  return signInRequest('/auth/sign-up/email', { email, password, name });
+export async function register(email: string, password: string, name: string, inviteCode?: string): Promise<{ user: User }> {
+  const code = inviteCode?.trim();
+  return signInRequest('/auth/sign-up/email', { email, password, name, ...(code ? { inviteCode: code } : {}) });
 }
+
+/** Accepts a bare code or a pasted invite link (`…/invite/<code>`). */
+export function parseInviteCode(input: string): string {
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/invite\/([^/?#\s]+)/);
+  return match ? decodeURIComponent(match[1]) : trimmed;
+}
+
+export async function redeemInvite(code: string): Promise<{ role: string }> {
+  return request('/invites/redeem', { method: 'POST', body: JSON.stringify({ code: parseInviteCode(code) }) });
+}
+
+// Admin (requires an admin account)
+export type UserRole = 'guest' | 'user' | 'admin';
+
+export interface AdminStats {
+  users: number;
+  usersByRole: Record<string, number>;
+  newUsers7d: number;
+  activeUsers7d: number;
+  bookmarks: number;
+  pendingInvites: number;
+  config: {
+    inviteMode: 'open' | 'invite-only';
+    defaultRole: UserRole;
+    quotas: Record<UserRole, number | null>;
+    emailEnabled: boolean;
+  };
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  banned: boolean;
+  banReason: string | null;
+  createdAt: string;
+  isEnvAdmin: boolean;
+  bookmarkCount: number;
+  quota: number | null;
+  lastActiveAt: string | null;
+}
+
+export interface AdminInvite {
+  code: string;
+  url: string;
+  role: UserRole;
+  maxUses: number | null;
+  uses: number;
+  expiresAt: string;
+  createdAt: string;
+  createdBy?: string | null;
+  emails: string[];
+  status: 'pending' | 'expired' | 'used' | 'canceled' | 'rejected';
+}
+
+export const admin = {
+  stats: () => request<AdminStats>('/admin/stats'),
+  users: (params: { search?: string; role?: UserRole; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+    return request<{ total: number; users: AdminUser[] }>(`/admin/users?${q}`);
+  },
+  setRole: (id: string, role: UserRole) =>
+    request<{ ok: true }>(`/admin/users/${id}/role`, { method: 'POST', body: JSON.stringify({ role }) }),
+  setPassword: (id: string, newPassword: string) =>
+    request<{ ok: true }>(`/admin/users/${id}/password`, { method: 'POST', body: JSON.stringify({ newPassword }) }),
+  ban: (id: string, reason?: string) =>
+    request<{ ok: true }>(`/admin/users/${id}/ban`, { method: 'POST', body: JSON.stringify({ reason: reason || undefined }) }),
+  unban: (id: string) => request<{ ok: true }>(`/admin/users/${id}/unban`, { method: 'POST', body: '{}' }),
+  revokeSessions: (id: string) =>
+    request<{ ok: true }>(`/admin/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' }),
+  deleteUser: (id: string) => request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
+  invites: () => request<{ invites: AdminInvite[] }>('/admin/invites'),
+  createInvite: (body: { role: UserRole; maxUses: number; expiresInDays: number; email?: string }) =>
+    request<{ invite: AdminInvite; emailed: boolean }>('/admin/invites', { method: 'POST', body: JSON.stringify(body) }),
+  revokeInvite: (code: string) => request<void>(`/admin/invites/${encodeURIComponent(code)}`, { method: 'DELETE' }),
+};
 
 /**
  * The whole OAuth dance runs inside the identity auth window against the

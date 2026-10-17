@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
-import { X, Upload, Download, Shield } from 'lucide-react';
-import { DEFAULT_API_BASE, getApiBase, setApiBase, importFromNiceTab, importFromToby, importNative, exportData } from '@/lib/api';
+import { X, Upload, Download, Shield, ShieldCheck } from 'lucide-react';
+import { DEFAULT_API_BASE, getApiBase, setApiBase, importFromNiceTab, importFromToby, importNative, exportData, redeemInvite } from '@/lib/api';
 import type { User } from '@/lib/api';
 import { reportServerReachable, reportServerUnreachable } from '@/lib/serverReachability';
 
@@ -13,9 +13,15 @@ interface SettingsModalProps {
   activeOrgName?: string;
   onDeleteAllSpaces?: () => void;
   user?: User | null;
+  /** Called after redeeming an invite so the caller can reload the user's role. */
+  onUserChanged?: () => void;
+  onOpenAdmin?: () => void;
 }
 
-export default function SettingsModal({ onClose, onImportDone, onServerChanged, activeOrgId, activeOrgName = 'Personal', onDeleteAllSpaces, user }: SettingsModalProps) {
+export default function SettingsModal({ onClose, onImportDone, onServerChanged, activeOrgId, activeOrgName = 'Personal', onDeleteAllSpaces, user, onUserChanged, onOpenAdmin }: SettingsModalProps) {
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemStatus, setRedeemStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const mousedownOnBackdropRef = useRef(false);
   const [serverUrl, setServerUrl] = useState(getApiBase());
   const [saving, setSaving] = useState(false);
@@ -59,6 +65,23 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
     } finally {
       clearTimeout(timer);
       setSaving(false);
+    }
+  };
+
+  const handleRedeem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!redeemCode.trim()) return;
+    setRedeeming(true);
+    setRedeemStatus(null);
+    try {
+      const { role } = await redeemInvite(redeemCode);
+      setRedeemCode('');
+      setRedeemStatus({ ok: true, text: `Invite applied — your account is now "${role}".` });
+      onUserChanged?.();
+    } catch (err: any) {
+      setRedeemStatus({ ok: false, text: err.message || 'Could not redeem invite' });
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -158,6 +181,40 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
                   </p>
                 )}
               </div>
+              {user.isAdmin && onOpenAdmin && (
+                <button
+                  onClick={onOpenAdmin}
+                  className="mt-2 flex items-center gap-1.5 rounded border border-[var(--accent)]/30 bg-[var(--background)] px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--surface)]"
+                >
+                  <ShieldCheck className="size-3.5" />
+                  Admin panel
+                </button>
+              )}
+              {!user.isAdmin && (
+                <form onSubmit={handleRedeem} className="mt-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 font-mono text-xs text-[var(--foreground)] outline-none placeholder:font-sans placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
+                      value={redeemCode}
+                      onChange={(e) => setRedeemCode(e.target.value)}
+                      placeholder="Invite code or link"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="submit"
+                      disabled={redeeming || !redeemCode.trim()}
+                      className="rounded border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--surface)] disabled:opacity-50"
+                    >
+                      {redeeming ? 'Redeeming…' : 'Redeem invite'}
+                    </button>
+                  </div>
+                  {redeemStatus && (
+                    <p className={`mt-1 text-[11px] ${redeemStatus.ok ? 'text-[var(--accent)]' : 'text-red-400'}`}>{redeemStatus.text}</p>
+                  )}
+                </form>
+              )}
             </div>
           )}
           {/* Server URL */}

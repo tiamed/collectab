@@ -127,6 +127,28 @@ describe('extension auth client', () => {
     expect(events).toEqual([true, false]);
   });
 
+  it('sends the invite code with sign-up only when one is given', async () => {
+    const api = await loadApi();
+    const signedUp = () => json({ token: 'sess', user: { id: 'u1', email: 'a@b.c', name: 'A', role: 'user' } });
+    fetchMock.mockResolvedValueOnce(signedUp()).mockResolvedValueOnce(signedUp());
+    await api.register('a@b.c', 'password123', 'A', '  abc123 ');
+    await api.register('a@b.c', 'password123', 'A', '');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).inviteCode).toBe('abc123');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('inviteCode');
+  });
+
+  it('accepts a pasted invite link wherever a code is expected', async () => {
+    store.access_token = 'sess';
+    const api = await loadApi();
+    expect(api.parseInviteCode('https://collectab.example.com/invite/AbC123?x=1')).toBe('AbC123');
+    expect(api.parseInviteCode(' AbC123 ')).toBe('AbC123');
+
+    fetchMock.mockResolvedValueOnce(json({ role: 'user' }));
+    await api.redeemInvite('https://collectab.example.com/invite/AbC123');
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.example.com/api/invites/redeem');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ code: 'AbC123' });
+  });
+
   it('normalises server URLs to the /api base', async () => {
     const api = await loadApi();
     expect(api.normalizeApiBase('https://api.example.com')).toBe('https://api.example.com/api');

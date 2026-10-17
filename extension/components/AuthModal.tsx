@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Server } from 'lucide-react';
-import { getApiBase, getServerAuthConfig, setApiBase, DEFAULT_API_BASE } from '@/lib/api';
+import { getApiBase, getServerAuthConfig, parseInviteCode, setApiBase, DEFAULT_API_BASE } from '@/lib/api';
 import type { ServerAuthConfig, User } from '@/lib/api';
 
 interface AuthModalProps {
   onClose: () => void;
   onLogin: (email: string, password: string) => Promise<User>;
-  onRegister: (email: string, password: string, name: string) => Promise<User>;
+  onRegister: (email: string, password: string, name: string, inviteCode?: string) => Promise<User>;
   onLoginWithGoogle?: () => Promise<User>;
 }
 
@@ -16,6 +16,7 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [serverUrl, setServerUrl] = useState(getApiBase());
   const [showServer, setShowServer] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +45,7 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
     }
   };
 
-  const signUpDisabled = config?.inviteMode === 'invite-only';
+  const inviteOnly = config?.inviteMode === 'invite-only';
   const showGoogle = !!onLoginWithGoogle && config?.google === true;
 
   const handleGoogleLogin = async () => {
@@ -83,7 +84,7 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
       if (mode === 'login') {
         await onLogin(email, password);
       } else {
-        await onRegister(email, password, name);
+        await onRegister(email, password, name, inviteCode ? parseInviteCode(inviteCode) : undefined);
       }
       onClose();
     } catch (err: any) {
@@ -98,6 +99,8 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
 
       if (/too many/i.test(msg)) {
         setHint('Too many attempts. Wait a few seconds and try again.');
+      } else if (mode === 'register' && /invite/i.test(msg)) {
+        setHint('Check the invite code, or ask the server admin for a new invite.');
       } else if (mode === 'login') {
         if (isNetwork) {
           setHint('Cannot reach the server. Check the Server URL below, or make sure your server is running.');
@@ -181,6 +184,23 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
               minLength={mode === 'register' ? 8 : undefined}
             />
           </div>
+          {mode === 'register' && (
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-[var(--muted)]">
+                Invite code{inviteOnly ? '' : ' (optional)'}
+              </label>
+              <input
+                type="text"
+                className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 font-mono text-xs text-[var(--foreground)] outline-none placeholder:font-sans placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                placeholder="Code or invite link"
+                required={inviteOnly}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+          )}
 
           {/* Server URL */}
           <div>
@@ -249,11 +269,9 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
         </button>
 
         <p className="mt-3 text-center text-[11px] text-[var(--muted)]">
-          {mode === 'login' && signUpDisabled ? (
-            <>This server is invite-only. Open your invitation link to create an account.</>
-          ) : mode === 'login' ? (
+          {mode === 'login' ? (
             <>
-              Don't have an account?{' '}
+              {inviteOnly ? 'Have an invite code?' : "Don't have an account?"}{' '}
               <button
                 type="button"
                 onClick={() => { setMode('register'); setError(null); setHint(null); }}
