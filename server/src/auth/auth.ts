@@ -7,6 +7,7 @@ import bcrypt from 'bcrypt';
 import { getDb } from '../database/client.js';
 import * as dbSchema from '../database/schema.js';
 import { getEnv } from '../config/env.js';
+import { trustedOrigins } from './origins.js';
 
 const SALT_ROUNDS = 12;
 
@@ -27,11 +28,33 @@ async function verifyPassword(data: { hash: string; password: string }): Promise
 const env = getEnv();
 const db = getDb();
 
+/** Fire-and-forget so auth responses don't wait on (or fail with) the mail provider. */
+function sendEmail(to: string, subject: string, html: string) {
+  void (async () => {
+    const { Resend } = await import('resend');
+    const resend = new Resend(getEnv().RESEND_API_KEY!);
+    const { error } = await resend.emails.send({
+      from: getEnv().RESEND_FROM_EMAIL || 'Collectab <noreply@collectab.app>',
+      to,
+      subject,
+      html,
+    });
+    if (error) console.error(`[email] failed to send "${subject}": ${error.message}`);
+  })().catch((err) => console.error(`[email] failed to send "${subject}":`, err));
+}
+
+/** Set by the HTTP layer from the socket/proxy; see clientIpFor() in app.ts. */
+export const CLIENT_IP_HEADER = 'x-collectab-client-ip';
+
 const authOptions = {
   basePath: '/api/auth',
   secret: env.BETTER_AUTH_SECRET,
   baseURL: env.BETTER_AUTH_URL,
-  trustedOrigins: env.TRUSTED_ORIGINS,
+  trustedOrigins: trustedOrigins(env),
+  session: {
+    expiresIn: Math.round(env.SESSION_EXPIRES_DAYS * 24 * 60 * 60),
+    updateAge: Math.round(env.SESSION_UPDATE_AGE_HOURS * 60 * 60),
+  },
   database: drizzleAdapter(db, {
     provider: 'pg',
     usePlural: true,
@@ -43,18 +66,12 @@ const authOptions = {
     disableSignUp: env.INVITE_MODE === 'invite-only',
     password: { hash: hashPassword, verify: verifyPassword },
     sendResetPassword: async ({ user, url }) => {
-      const env = getEnv();
-      if (env.RESEND_API_KEY) {
-        const { Resend } = await import('resend');
-        const resend = new Resend(env.RESEND_API_KEY);
-        void resend.emails.send({
-          from: env.RESEND_FROM_EMAIL || 'Collectab <noreply@collectab.app>',
-          to: user.email,
-          subject: 'Reset your Collectab password',
-          html: `Click <a href="${url}">here</a> to reset your password.`,
-        });
-      } else {
+      if (getEnv().RESEND_API_KEY) {
+        sendEmail(user.email, 'Reset your Collectab password', `Click <a href="${url}">here</a> to reset your password.`);
+      } else if (env.NODE_ENV !== 'production') {
         console.log(`[password-reset] ${user.email}: ${url}`);
+      } else {
+        console.warn('[password-reset] requested but RESEND_API_KEY is not configured');
       }
     },
   },
@@ -86,9 +103,15 @@ const authOptions = {
     max: env.RATE_LIMIT_MAX,
   },
   advanced: {
+    // Cookies only carry the short-lived OAuth state/session inside the Google
+    // sign-in window (same site as this server); the extension itself uses bearer tokens.
+    useSecureCookies: env.BETTER_AUTH_URL.startsWith('https://'),
     defaultCookieAttributes: {
-      secure: env.NODE_ENV === 'production',
       sameSite: 'lax',
+      httpOnly: true,
+    },
+    ipAddress: {
+      ipAddressHeaders: [CLIENT_IP_HEADER],
     },
     database: {
       // Existing tables use UUID primary keys; better-auth defaults to
@@ -111,14 +134,7 @@ const authOptions = {
       defaultSenderResponseRedirect: 'signUp',
       sendUserInvitation: env.RESEND_API_KEY
         ? async ({ email, url }) => {
-            const { Resend } = await import('resend');
-            const resend = new Resend(getEnv().RESEND_API_KEY!);
-            void resend.emails.send({
-              from: getEnv().RESEND_FROM_EMAIL || 'Collectab <noreply@collectab.app>',
-              to: email,
-              subject: 'You are invited to Collectab',
-              html: `Click <a href="${url}">here</a> to accept your invitation.`,
-            });
+            sendEmail(email, 'You are invited to Collectab', `Click <a href="${url}">here</a> to accept your invitation.`);
           }
         : undefined,
     }),
