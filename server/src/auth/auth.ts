@@ -9,6 +9,8 @@ import * as dbSchema from '../database/schema.js';
 import { getEnv } from '../config/env.js';
 import { trustedOrigins } from './origins.js';
 import { inviteLandingUrl, isAdmin } from './roles.js';
+import { signUpPermit } from './invites.js';
+import { APIError } from 'better-auth/api';
 
 const SALT_ROUNDS = 12;
 
@@ -64,7 +66,9 @@ const authOptions = {
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
-    disableSignUp: env.INVITE_MODE === 'invite-only',
+    // INVITE_MODE is enforced by the sign-up route in app.ts plus the
+    // user.create guard below, so invite codes can be redeemed at sign-up.
+    disableSignUp: false,
     password: { hash: hashPassword, verify: verifyPassword },
     sendResetPassword: async ({ user, url }) => {
       if (getEnv().RESEND_API_KEY) {
@@ -81,12 +85,19 @@ const authOptions = {
         google: {
           clientId: env.OAUTH_GOOGLE_CLIENT_ID,
           clientSecret: env.OAUTH_GOOGLE_CLIENT_SECRET,
+          disableImplicitSignUp: env.INVITE_MODE === 'invite-only',
         },
       }
     : {},
   databaseHooks: {
     user: {
       create: {
+        before: async (_user, ctx) => {
+          if (env.INVITE_MODE !== 'invite-only') return;
+          if (signUpPermit.getStore()?.allowed) return;
+          if (ctx?.path?.startsWith('/admin/')) return;
+          throw new APIError('FORBIDDEN', { message: 'This server is invite-only. Sign up with an invite code.' });
+        },
         after: async (user) => {
           await db.insert(dbSchema.spaces).values({
             ownerId: user.id,

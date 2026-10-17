@@ -73,6 +73,8 @@ const envSchema = z.object({
   OAUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().default(60),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
+  /** Chrome Web Store (or other) install link shown on invite pages. */
+  EXTENSION_INSTALL_URL: z.string().optional(),
   /** Shown on the /privacy page. */
   PRIVACY_CONTACT_EMAIL: z.string().optional(),
   PRIVACY_OPERATOR_NAME: z.string().optional(),

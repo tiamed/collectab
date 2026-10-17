@@ -13,7 +13,10 @@ import { memberRoutes } from './api/routes/members.js';
 import { orgRoutes } from './api/routes/organizations.js';
 import { meRoutes } from './api/routes/me.js';
 import { adminRoutes } from './api/routes/admin.js';
+import { inviteRoutes } from './api/routes/invites.js';
 import { privacyPolicyHtml } from './api/routes/privacy.js';
+import { inviteLandingHtml } from './api/routes/invite-page.js';
+import { checkInvite, signUpPermit, type InviteRow } from './auth/invites.js';
 import { errorHandler } from './api/middleware/error-handler.js';
 import { getEnv } from './config/env.js';
 
@@ -36,7 +39,7 @@ export function clientIpFor(headers: Headers, remoteAddress: string | undefined,
   return remoteAddress ?? null;
 }
 
-async function withClientIp(c: Context, trustProxy: boolean): Promise<Request> {
+async function withClientIp(c: Context, trustProxy: boolean, body?: string): Promise<Request> {
   const req = c.req.raw;
   const headers = new Headers(req.headers);
   headers.delete(CLIENT_IP_HEADER);
@@ -47,7 +50,7 @@ async function withClientIp(c: Context, trustProxy: boolean): Promise<Request> {
   return new Request(req.url, {
     method: req.method,
     headers,
-    body: hasBody ? await req.arrayBuffer() : undefined,
+    body: hasBody ? (body ?? (await req.arrayBuffer())) : undefined,
   });
 }
 
@@ -80,6 +83,22 @@ export function createApp() {
 
   app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
   app.get('/privacy', (c) => c.html(privacyPolicyHtml(env)));
+  app.get('/invite/:code', async (c) => {
+    const code = c.req.param('code');
+    const check = await checkInvite(code, undefined, { ignoreEmail: true });
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    return c.html(
+      inviteLandingHtml({
+        code,
+        serverUrl: `${env.BETTER_AUTH_URL}/api`,
+        installUrl: env.EXTENSION_INSTALL_URL,
+        invite: check.ok ? check.invite : null,
+        error: check.ok ? null : check.message,
+      }),
+      check.ok ? 200 : 404,
+    );
+  });
 
   app.get('/api/auth-config', (c) =>
     c.json({ inviteMode: env.INVITE_MODE, google: googleEnabled }),
@@ -143,7 +162,60 @@ export function createApp() {
     return res;
   });
 
-  app.on(['POST', 'GET'], '/api/auth/*', async (c) => auth.handler(await withClientIp(c, env.TRUST_PROXY)));
+  const signUp = async (c: Context) => {
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ message: 'Invalid JSON body' }, 400);
+    }
+    const code = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : '';
+    delete body.inviteCode;
+
+    if (!code && env.INVITE_MODE === 'invite-only') {
+      return c.json({ code: 'INVITE_REQUIRED', message: 'This server is invite-only. Enter your invite code to sign up.' }, 403);
+    }
+    let invitation: InviteRow | null = null;
+    if (code) {
+      const check = await checkInvite(code, typeof body.email === 'string' ? body.email : undefined);
+      if (!check.ok) return c.json({ code: check.code, message: check.message }, 400);
+      invitation = check.invite;
+    }
+
+    const req = await withClientIp(c, env.TRUST_PROXY, JSON.stringify(body));
+    const res = await signUpPermit.run({ allowed: true }, () => auth.handler(req));
+    if (!invitation || !res.ok) return res;
+
+    const data = (await res.clone().json()) as { token?: string; user?: { id: string; role?: string } };
+    try {
+      await auth.api.activateInvite({
+        body: { token: code },
+        headers: new Headers({ Authorization: `Bearer ${data.token}` }),
+      });
+    } catch (err) {
+      // Lost a race for the invite's last use. In invite-only mode the account
+      // must not survive without it.
+      console.error('[invite] activation after sign-up failed:', err);
+      if (env.INVITE_MODE === 'invite-only' && data.user?.id) {
+        const ctx = await auth.$context;
+        await ctx.internalAdapter.deleteUser(data.user.id);
+        return c.json({ code: 'INVITE_USED_UP', message: 'This invite has already been used' }, 400);
+      }
+      return res;
+    }
+    if (data.user) data.user.role = invitation.role;
+    const headers = new Headers(res.headers);
+    headers.delete('content-length');
+    return new Response(JSON.stringify(data), { status: res.status, headers });
+  };
+
+  app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
+    // Route sign-up through our handler however the path is spelled, so
+    // invite checks can't be skipped with a trailing slash or similar.
+    const path = new URL(c.req.url).pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '').toLowerCase();
+    if (c.req.method === 'POST' && path === '/api/auth/sign-up/email') return signUp(c);
+    return auth.handler(await withClientIp(c, env.TRUST_PROXY));
+  });
 
   app.route('/api/spaces', spaceRoutes);
   app.route('/api/collections', collectionRoutes);
@@ -153,6 +225,7 @@ export function createApp() {
   app.route('/api/members', memberRoutes);
   app.route('/api/orgs', orgRoutes);
   app.route('/api/admin', adminRoutes);
+  app.route('/api/invites', inviteRoutes);
 
   return app;
 }
