@@ -1,17 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { getSession, signInSocial, handler } = vi.hoisted(() => ({
+const { getSession, signInSocial, handler, activateInvite, deleteUser, checkInvite } = vi.hoisted(() => ({
   getSession: vi.fn(),
   signInSocial: vi.fn(),
   handler: vi.fn(),
+  activateInvite: vi.fn(),
+  deleteUser: vi.fn(),
+  checkInvite: vi.fn(),
 }));
 
 vi.mock('../src/auth/auth.js', () => ({
   CLIENT_IP_HEADER: 'x-collectab-client-ip',
   auth: {
     handler,
-    api: { getSession, signInSocial },
+    api: { getSession, signInSocial, activateInvite },
     $context: Promise.resolve({
+      internalAdapter: { deleteUser },
       authCookies: {
         sessionToken: { name: '__Secure-better-auth.session_token', attributes: { secure: true } },
         sessionData: { name: '__Secure-better-auth.session_data' },
@@ -32,10 +36,17 @@ vi.mock('../src/database/client.js', () => ({
   getPool: () => ({}),
 }));
 
+vi.mock('../src/auth/invites.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/auth/invites.js')>()),
+  checkInvite,
+}));
+
 process.env.OAUTH_GOOGLE_CLIENT_ID = 'test-client-id';
 process.env.OAUTH_GOOGLE_CLIENT_SECRET = 'test-client-secret';
 
 const { createApp, clientIpFor } = await import('../src/app.js');
+const { signUpPermit } = await import('../src/auth/invites.js');
+const { getEnv } = await import('../src/config/env.js');
 
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 const REDIRECT = 'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/oauth';
@@ -48,6 +59,100 @@ describe('app wiring', () => {
     signInSocial.mockReset();
     handler.mockReset();
     handler.mockResolvedValue(new Response('{}', { status: 200 }));
+    activateInvite.mockReset();
+    deleteUser.mockReset();
+    checkInvite.mockReset();
+  });
+
+  it('keeps non-admins out of /api/admin', async () => {
+    getSession.mockResolvedValue({ user: { id: 'u1', email: 'u1@example.com', role: 'user' }, session: {} });
+    const res = await app.request('/api/admin/stats', { headers: { Authorization: 'Bearer t' } });
+    expect(res.status).toBe(403);
+  });
+
+  it('reports isAdmin on /api/auth/me', async () => {
+    getSession.mockResolvedValue({ user: { id: 'u1', email: 'u1@example.com', role: 'guest' }, session: {} });
+    const res = await app.request('/api/auth/me', { headers: { Authorization: 'Bearer t' } });
+    expect((await res.json()).user.isAdmin).toBe(false);
+  });
+
+  describe('sign-up', () => {
+    const signUp = (body: Record<string, unknown>, path = '/api/auth/sign-up/email') =>
+      app.request(path, { method: 'POST', body: JSON.stringify(body), headers: { Origin: EXT, 'Content-Type': 'application/json' } });
+    const account = { email: 'new@example.com', password: 'password123', name: 'N' };
+    const signedUp = () =>
+      new Response(JSON.stringify({ token: 'tok', user: { id: 'u9', role: 'guest' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'set-auth-token': 'tok' },
+      });
+
+    it('creates accounts under the sign-up permit in open mode', async () => {
+      let permitted: unknown;
+      handler.mockImplementation(async () => {
+        permitted = signUpPermit.getStore()?.allowed;
+        return signedUp();
+      });
+      const res = await signUp(account);
+      expect(res.status).toBe(200);
+      expect(permitted).toBe(true);
+      expect(checkInvite).not.toHaveBeenCalled();
+    });
+
+    it('rejects a bad invite code before creating the account', async () => {
+      checkInvite.mockResolvedValue({ ok: false, code: 'INVITE_EXPIRED', message: 'This invite has expired' });
+      const res = await signUp({ ...account, inviteCode: 'old' });
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe('INVITE_EXPIRED');
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('applies the invite after sign-up and strips the code from the Better Auth body', async () => {
+      checkInvite.mockResolvedValue({ ok: true, invite: { role: 'user' }, uses: 0 });
+      handler.mockResolvedValue(signedUp());
+      const res = await signUp({ ...account, inviteCode: 'abc' });
+      expect(res.status).toBe(200);
+      expect((await res.json()).user.role).toBe('user');
+      expect(res.headers.get('set-auth-token')).toBe('tok');
+      expect(JSON.parse(await (handler.mock.calls[0][0] as Request).text())).toEqual(account);
+      const call = activateInvite.mock.calls[0][0];
+      expect(call.body).toEqual({ token: 'abc' });
+      expect(call.headers.get('authorization')).toBe('Bearer tok');
+    });
+
+    it('cannot be bypassed by respelling the path', async () => {
+      checkInvite.mockResolvedValue({ ok: false, code: 'INVALID_INVITE', message: 'nope' });
+      for (const path of ['/api/auth/sign-up/email/', '/api/auth//sign-up/email', '/api/auth/Sign-Up/Email']) {
+        const res = await signUp({ ...account, inviteCode: 'x' }, path);
+        expect(res.status, path).toBe(400);
+      }
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    describe('invite-only mode', () => {
+      beforeEach(() => {
+        getEnv().INVITE_MODE = 'invite-only';
+        return () => {
+          getEnv().INVITE_MODE = 'open';
+        };
+      });
+
+      it('requires an invite code', async () => {
+        const res = await signUp(account);
+        expect(res.status).toBe(403);
+        expect((await res.json()).code).toBe('INVITE_REQUIRED');
+        expect(handler).not.toHaveBeenCalled();
+      });
+
+      it('deletes the account if the invite was used up in the meantime', async () => {
+        checkInvite.mockResolvedValue({ ok: true, invite: { role: 'user' }, uses: 0 });
+        handler.mockResolvedValue(signedUp());
+        activateInvite.mockRejectedValue(new Error('used up'));
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const res = await signUp({ ...account, inviteCode: 'abc' });
+        expect(res.status).toBe(400);
+        expect(deleteUser).toHaveBeenCalledWith('u9');
+      });
+    });
   });
 
   it('routes GET /api/auth/me to our handler, not the Better Auth catch-all', async () => {

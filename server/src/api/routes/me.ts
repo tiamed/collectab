@@ -3,6 +3,7 @@ import { authMiddleware, type AuthEnv } from '../middleware/auth.js';
 import { getDb } from '../../database/client.js';
 import { users } from '../../database/schema.js';
 import { eq } from 'drizzle-orm';
+import { isAdmin } from '../../auth/roles.js';
 
 export const meRoutes = new Hono<AuthEnv>();
 
@@ -25,5 +26,5 @@ meRoutes.get('/', authMiddleware, async (c) => {
     return c.json({ error: 'User not found' }, 404);
   }
 
-  return c.json({ user });
+  return c.json({ user: { ...user, isAdmin: isAdmin(user) } });
 });
