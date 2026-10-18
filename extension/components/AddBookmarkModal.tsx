@@ -23,11 +23,13 @@ export default function AddBookmarkModal({ collectionId, onSave, onClose }: AddB
   const [tags, setTags] = useState('');
   const [favicon, setFavicon] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !url.trim()) return;
     setSaving(true);
+    setError(null);
     try {
       await onSave({
         collectionId,
@@ -37,6 +39,8 @@ export default function AddBookmarkModal({ collectionId, onSave, onClose }: AddB
         favicon: favicon.trim() || undefined,
         tags: tags ? tags.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
       });
+    } catch (err: any) {
+      setError(err.message || 'Failed to save bookmark');
     } finally {
       setSaving(false);
     }
@@ -74,6 +78,12 @@ export default function AddBookmarkModal({ collectionId, onSave, onClose }: AddB
           <Field label="Tags" value={tags} onChange={setTags} placeholder="comma separated" />
           <FaviconField value={favicon} onChange={setFavicon} pageUrl={url} title={title} />
         </div>
+
+        {error && (
+          <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2">
+            <p className="text-[11px] text-red-400">{error}</p>
+          </div>
+        )}
 
         <div className="mt-5 flex justify-end gap-2">
           <button

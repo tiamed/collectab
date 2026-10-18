@@ -1,9 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import jwt from 'jsonwebtoken';
 import { authMiddleware } from '../src/api/middleware/auth.js';
 
+const mockSession = vi.fn();
+
+vi.mock('../src/auth/auth.js', () => ({
+  auth: {
+    api: {
+      getSession: (...args: unknown[]) => mockSession(...args),
+    },
+  },
+}));
+
 describe('Auth middleware', () => {
+  beforeEach(() => {
+    mockSession.mockReset();
+  });
+
   const app = new Hono();
   app.use('*', authMiddleware);
   app.get('/protected', (c) => c.json({ userId: c.get('userId') }));
@@ -11,8 +24,6 @@ describe('Auth middleware', () => {
   it('rejects requests without Authorization header', async () => {
     const res = await app.request('/protected');
     expect(res.status).toBe(401);
-    const text = await res.text();
-    expect(text).toContain('Missing');
   });
 
   it('rejects requests with non-Bearer scheme', async () => {
@@ -22,42 +33,21 @@ describe('Auth middleware', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects expired tokens', async () => {
-    const expiredToken = jwt.sign(
-      { sub: 'user-1', email: 'test@test.com' },
-      process.env.JWT_SECRET!,
-      { expiresIn: -10 },
-    );
+  it('rejects requests when no valid session', async () => {
+    mockSession.mockResolvedValue(null);
     const res = await app.request('/protected', {
-      headers: { Authorization: `Bearer ${expiredToken}` },
+      headers: { Authorization: 'Bearer some-token' },
     });
     expect(res.status).toBe(401);
-    const text = await res.text();
-    expect(text).toContain('expired');
   });
 
-  it('rejects tokens signed with wrong secret', async () => {
-    const badToken = jwt.sign(
-      { sub: 'user-1', email: 'test@test.com' },
-      'wrong-secret-key-wrong-secret-key',
-      { expiresIn: 900 },
-    );
-    const res = await app.request('/protected', {
-      headers: { Authorization: `Bearer ${badToken}` },
+  it('passes valid sessions and sets userId', async () => {
+    mockSession.mockResolvedValue({
+      user: { id: 'user-42', email: 'valid@test.com', role: 'user' },
+      session: { id: 'session-1' },
     });
-    expect(res.status).toBe(401);
-    const text = await res.text();
-    expect(text).toContain('Invalid');
-  });
-
-  it('passes valid tokens and sets userId', async () => {
-    const validToken = jwt.sign(
-      { sub: 'user-42', email: 'valid@test.com' },
-      process.env.JWT_SECRET!,
-      { expiresIn: 900 },
-    );
     const res = await app.request('/protected', {
-      headers: { Authorization: `Bearer ${validToken}` },
+      headers: { Authorization: 'Bearer valid-token' },
     });
     expect(res.status).toBe(200);
     const body = await res.json();

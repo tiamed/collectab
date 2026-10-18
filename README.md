@@ -14,7 +14,6 @@ A Toby-like browser extension bookmark manager with organizations, spaces, colle
 - **Import / Export** — import from NiceTab, Toby, or a previous export; export all data as JSON
 - **Light & Dark Mode** — system-aware theme toggle
 - **Self-hostable** — configurable API server URL
-- **Save Session** — save all open tabs as a collection
 
 ## Structure
 
@@ -35,6 +34,10 @@ A Toby-like browser extension bookmark manager with organizations, spaces, colle
 ## Self-Deployment
 
 PostgreSQL is **required**.
+
+> **Public HTTPS server for the Chrome Web Store build?** Follow [docs/deployment.md](docs/deployment.md)
+> (env vars, Caddy/nginx, Google OAuth, sessions) and [docs/chrome-web-store.md](docs/chrome-web-store.md)
+> (permission justifications, privacy policy, reviewer account). The quick start below is for local use.
 
 ### Option A — Docker Compose (recommended)
 
@@ -87,8 +90,7 @@ docker compose exec postgres pg_isready -U postgres
 docker pull ghcr.io/tiamed/collectab/server:latest
 docker run --rm -p 3001:3001 \
   -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/collectab \
-  -e JWT_SECRET=your-secret-at-least-32-chars-long \
-  -e JWT_REFRESH_SECRET=your-refresh-secret-at-least-32-chars \
+  -e BETTER_AUTH_SECRET=your-secret-at-least-32-chars-long \
   ghcr.io/tiamed/collectab/server:latest
 ```
 
@@ -111,25 +113,72 @@ done
 ### Configure the Extension
 
 1. Install the extension (load unpacked from `extension/.output/chrome-mv3/` or install the `.zip` from Releases).
-2. Open a new tab → click the **Settings** gear icon.
-3. Set the **Server URL** to your server's address (e.g. `http://your-server:3001/api`).
-4. Click **Save & Test** to verify the connection.
+2. Open a new tab → **Settings** (gear icon), or expand **Server URL** in the sign-in dialog.
+3. Enter your server, e.g. `https://api.example.com` (the `/api` suffix is added automatically) or `http://localhost:3001/api`.
+4. Click **Save & Test**, then sign up / sign in.
+
+Builds can ship with a default server: `WXT_API_BASE_URL=https://api.example.com pnpm build`.
 
 ### Environment Variables
 
-Copy `server/.env.example` to `server/.env` and customize:
+Copy `server/.env.example` to `.env` (repo root, for docker compose) or `server/.env` (for `npm run dev`) and customize.
+With `NODE_ENV=production` the server refuses to start if `BETTER_AUTH_SECRET` is the example value or `BETTER_AUTH_URL` is not `https://`.
+
+**Required in production**
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/collectab` |
-| `JWT_SECRET` | Secret for signing access tokens (min 32 chars) | — |
-| `JWT_REFRESH_SECRET` | Secret for signing refresh tokens | — |
-| `JWT_ACCESS_EXPIRY_SECONDS` | Access token lifetime | `900` |
-| `JWT_REFRESH_EXPIRY_SECONDS` | Refresh token lifetime | `604800` |
-| `PORT` | Server port | `3001` |
-| `CORS_ORIGIN` | Allowed CORS origins | `*` |
+| `NODE_ENV` | `production` enables secure cookies and startup config checks | `development` (image: `production`) |
+| `DATABASE_URL` | PostgreSQL connection string (compose builds it from `POSTGRES_PASSWORD`) | `postgresql://postgres:postgres@localhost:5432/collectab` |
+| `BETTER_AUTH_SECRET` | Session signing secret, ≥32 chars: `openssl rand -base64 32` | dev placeholder |
+| `BETTER_AUTH_URL` | Public origin of the server, **no `/api`**: `https://api.example.com` | `http://localhost:3001` |
+| `TRUST_PROXY` | `true` behind Caddy/nginx so rate limits use the real client IP | `false` |
 
-> **Production**: Always change `JWT_SECRET`, `JWT_REFRESH_SECRET`, and `POSTGRES_PASSWORD` to strong random values.
+**Extension, origins & sessions**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EXTENSION_IDS` | Chrome extension IDs (or `chrome-extension://…` / `moz-extension://` origins) allowed to sign in | empty = any extension |
+| `CORS_ORIGIN` | Extra web origins allowed by CORS (`*` = any) | own origin + extension origins |
+| `TRUSTED_ORIGINS` | Extra Better Auth trusted origins | — |
+| `SESSION_EXPIRES_DAYS` | Sliding session lifetime (expires after this long unused) | `30` |
+| `SESSION_UPDATE_AGE_HOURS` | How often an active session's expiry is extended | `24` |
+| `PORT` / `HOST` | Listen address | `3001` / `0.0.0.0` |
+
+**Sign-up, roles & quotas**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `INVITE_MODE` | `open` (anyone can sign up) or `invite-only` | `open` |
+| `DEFAULT_ROLE` | Role assigned on sign-up (`guest` / `user` / `admin`) | `guest` |
+| `ADMIN_USER_IDS` | Comma-separated user IDs with admin privileges | — |
+| `ROLE_QUOTAS` | Per-role bookmark quotas (`guest=10,user=500,admin=unlimited`) | default quotas |
+| `DISABLE_QUOTAS` | `true` to disable all bookmark quotas | `false` |
+
+**Optional integrations**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RESEND_API_KEY` | Enables password-reset and invitation emails | — |
+| `RESEND_FROM_EMAIL` | From address for auth emails | `Collectab <noreply@collectab.app>` |
+| `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | Enables "Continue with Google" | — |
+| `RATE_LIMIT_WINDOW_SECONDS` / `RATE_LIMIT_MAX` | `/api/auth/*` limit per IP and path (sign-in/up additionally 3 per 10 s) | `60` / `100` |
+| `PRIVACY_OPERATOR_NAME` / `PRIVACY_CONTACT_EMAIL` | Shown on the `/privacy` page | — |
+| `EXTENSION_INSTALL_URL` | Extension install link shown on invite pages | — |
+
+> **Production**: always set strong random `BETTER_AUTH_SECRET` and `POSTGRES_PASSWORD`, and serve over HTTPS.
+
+### Authentication & Roles
+
+- **Sessions**: Better Auth issues an opaque session token that the extension sends as `Authorization: Bearer …`. Sessions are sliding: they stay valid while used and expire after `SESSION_EXPIRES_DAYS` of inactivity. There is no refresh token. A 401 means the session is gone, and the extension signs out immediately instead of retrying.
+- **Self-hosted control**: set `INVITE_MODE=invite-only` to require an invitation before anyone can register. In `open` mode (default), anyone can register and gets `DEFAULT_ROLE` (default `guest`).
+- **Roles** control the bookmark quota: `guest` = 10 bookmarks, `user` = 500, `admin` = unlimited (adjust with `ROLE_QUOTAS`, or set `DISABLE_QUOTAS=true` to remove all limits).
+- **Becoming admin**: sign up, then put your user ID (`GET /api/auth/me`) in `ADMIN_USER_IDS` and restart. Admins can promote other admins from the admin panel; `ADMIN_USER_IDS` accounts can't be demoted there.
+- **Admin panel**: in the extension, **Settings → Account → Admin panel** (admins only). It shows usage stats and lets you search users, change roles, reset passwords, ban/unban, sign a user out everywhere, delete accounts (with all their data), and create, copy and revoke invites. The same actions are available as a JSON API under `/api/admin` (`stats`, `users`, `users/:id/{role,password,ban,unban,revoke-sessions}`, `DELETE users/:id`, `invites`, `DELETE invites/:code`).
+- **Invites**: an invite has a role, a number of uses and an expiry, and optionally an email address it is restricted to (and emailed to, which needs `RESEND_API_KEY`). Share the invite link `<BETTER_AUTH_URL>/invite/<code>`: it explains how to install the extension and which server URL to use. New users paste the code (or the link) into the **Invite code** field when signing up; existing accounts redeem it under **Settings → Account**, which only ever raises their role. In `invite-only` mode a valid code is required to create an account (Google sign-in can't create new accounts in this mode). Set `EXTENSION_INSTALL_URL` to your Chrome Web Store link to show it on the invite page.
+- **Email is optional**: without `RESEND_API_KEY`, share invite links yourself; password-reset links are printed to the console in development only (an admin can set a new password from the admin panel instead).
+- **Google sign-in**: configure the `OAUTH_GOOGLE_*` variables and add the redirect URI `<BETTER_AUTH_URL>/api/auth/callback/google` to a *Web application* OAuth client. The extension's `chromiumapp.org` redirect is handled by the server and does not need to be registered with Google. If an email/password account already uses the same (Google-verified) email, Google is linked to it; because sign-up never verified that email, the old password and sessions are removed on that first link. See [docs/deployment.md](docs/deployment.md#4-optional-google-sign-in).
+- **Privacy policy**: every server serves one at `/privacy` (template in [docs/privacy-policy.md](docs/privacy-policy.md)).
 
 ---
 
@@ -152,7 +201,7 @@ pnpm zip          # Package as .zip for distribution
 ```bash
 cd server
 npm install
-cp .env.example .env
+cp .env.example .env            # then set NODE_ENV=development
 docker compose up postgres -d   # Start PostgreSQL (required)
 # or: docker run -d --name collectab-pg -e POSTGRES_DB=collectab \
 #      -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
@@ -182,6 +231,6 @@ git push origin v0.1.0
 ## Tech Stack
 
 - **Extension**: WXT + React 19 + Tailwind CSS v4 + Lucide icons
-- **Server**: Hono + PostgreSQL + Drizzle ORM + JWT auth
+- **Server**: Hono + PostgreSQL + Drizzle ORM + Better Auth
 - **Drag & Drop**: @dnd-kit/core + @dnd-kit/sortable
 - **Real-time Sync**: Loro CRDT (loro-crdt) + WebSocket

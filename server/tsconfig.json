@@ -9,8 +9,13 @@
     "rootDir": ".",
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "declaration": true
+    "declaration": false
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
-import { X, Upload, Download } from 'lucide-react';
-import { getApiBase, setApiBase, importFromNiceTab, importFromToby, importNative, exportData } from '@/lib/api';
+import { X, Upload, Download, Shield, ShieldCheck } from 'lucide-react';
+import { DEFAULT_API_BASE, getApiBase, setApiBase, importFromNiceTab, importFromToby, importNative, exportData, redeemInvite } from '@/lib/api';
+import type { User } from '@/lib/api';
 import { reportServerReachable, reportServerUnreachable } from '@/lib/serverReachability';
 
 interface SettingsModalProps {
@@ -11,9 +12,16 @@ interface SettingsModalProps {
   activeOrgId?: string | null;
   activeOrgName?: string;
   onDeleteAllSpaces?: () => void;
+  user?: User | null;
+  /** Called after redeeming an invite so the caller can reload the user's role. */
+  onUserChanged?: () => void;
+  onOpenAdmin?: () => void;
 }
 
-export default function SettingsModal({ onClose, onImportDone, onServerChanged, activeOrgId, activeOrgName = 'Personal', onDeleteAllSpaces }: SettingsModalProps) {
+export default function SettingsModal({ onClose, onImportDone, onServerChanged, activeOrgId, activeOrgName = 'Personal', onDeleteAllSpaces, user, onUserChanged, onOpenAdmin }: SettingsModalProps) {
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemStatus, setRedeemStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const mousedownOnBackdropRef = useRef(false);
   const [serverUrl, setServerUrl] = useState(getApiBase());
   const [saving, setSaving] = useState(false);
@@ -37,9 +45,9 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
     const timer = setTimeout(() => controller.abort(), 8000);
     const start = performance.now();
     try {
-      const trimmed = serverUrl.trim().replace(/\/+$/, '');
-      const { changed, hadSession } = await setApiBase(trimmed);
-      const res = await fetch(trimmed.replace(/\/api$/, '') + '/health', { signal: controller.signal });
+      const { changed, hadSession } = await setApiBase(serverUrl);
+      setServerUrl(getApiBase());
+      const res = await fetch(getApiBase().replace(/\/api$/, '') + '/health', { signal: controller.signal });
       if (res.ok) {
         reportServerReachable();
         setLatency(Math.round(performance.now() - start));
@@ -57,6 +65,23 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
     } finally {
       clearTimeout(timer);
       setSaving(false);
+    }
+  };
+
+  const handleRedeem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!redeemCode.trim()) return;
+    setRedeeming(true);
+    setRedeemStatus(null);
+    try {
+      const { role } = await redeemInvite(redeemCode);
+      setRedeemCode('');
+      setRedeemStatus({ ok: true, text: `Invite applied — your account is now "${role}".` });
+      onUserChanged?.();
+    } catch (err: any) {
+      setRedeemStatus({ ok: false, text: err.message || 'Could not redeem invite' });
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -128,19 +153,70 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)]" onMouseDown={handleBackdropMouseDown} onClick={handleBackdropClick}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] p-4" onMouseDown={handleBackdropMouseDown} onClick={handleBackdropClick}>
       <div
-        className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 shadow-xl"
+        className="flex max-h-[min(90vh,calc(100vh-2rem))] w-full max-w-md flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-5 flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-6">
           <h3 className="text-sm font-semibold text-[var(--foreground)]">Settings</h3>
           <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--foreground)]">
             <X className="size-4" />
           </button>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 pb-1">
+          {user && (
+            <div>
+              <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-[var(--muted)]">
+                <Shield className="size-3" />
+                Account
+              </label>
+              <div className="rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2">
+                <p className="text-xs text-[var(--foreground)]">{user.name}</p>
+                <p className="text-[10px] text-[var(--muted)]">{user.email}</p>
+                {user.role && (
+                  <p className="mt-1 text-[10px] uppercase tracking-wide text-[var(--accent)]">
+                    {user.role === 'guest' ? 'Guest (limited quota)' : user.role}
+                  </p>
+                )}
+              </div>
+              {user.isAdmin && onOpenAdmin && (
+                <button
+                  onClick={onOpenAdmin}
+                  className="mt-2 flex items-center gap-1.5 rounded border border-[var(--accent)]/30 bg-[var(--background)] px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--surface)]"
+                >
+                  <ShieldCheck className="size-3.5" />
+                  Admin panel
+                </button>
+              )}
+              {!user.isAdmin && (
+                <form onSubmit={handleRedeem} className="mt-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 font-mono text-xs text-[var(--foreground)] outline-none placeholder:font-sans placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
+                      value={redeemCode}
+                      onChange={(e) => setRedeemCode(e.target.value)}
+                      placeholder="Invite code or link"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="submit"
+                      disabled={redeeming || !redeemCode.trim()}
+                      className="rounded border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--surface)] disabled:opacity-50"
+                    >
+                      {redeeming ? 'Redeeming…' : 'Redeem invite'}
+                    </button>
+                  </div>
+                  {redeemStatus && (
+                    <p className={`mt-1 text-[11px] ${redeemStatus.ok ? 'text-[var(--accent)]' : 'text-red-400'}`}>{redeemStatus.text}</p>
+                  )}
+                </form>
+              )}
+            </div>
+          )}
           {/* Server URL */}
           <div>
             <label className="mb-1 block text-[11px] font-medium text-[var(--muted)]">Server URL</label>
@@ -152,7 +228,7 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
               className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="http://localhost:3000/api"
+              placeholder={DEFAULT_API_BASE}
             />
             <div className="mt-2 flex items-center gap-2">
               <button
@@ -258,8 +334,17 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
           <div className="border-t border-[var(--border)] pt-4">
             <label className="mb-1 block text-[11px] font-medium text-[var(--muted)]">Account</label>
             <p className="text-[10px] text-[var(--muted)]">
-              Logged in via token stored in extension storage.
+              Signed in with a session token kept in this browser's extension storage. Sessions stay valid while
+              you use them and expire after a period of inactivity; signing out revokes them on the server.
             </p>
+            <a
+              href={`${getApiBase().replace(/\/api$/, '')}/privacy`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block text-[10px] text-[var(--accent)] hover:underline"
+            >
+              Privacy policy
+            </a>
           </div>
 
           {/* Danger zone */}
@@ -307,7 +392,7 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
           )}
         </div>
 
-        <div className="mt-5 flex justify-end">
+        <div className="flex shrink-0 justify-end border-t border-[var(--border)] px-6 py-3">
           <button
             onClick={onClose}
             className="rounded px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--background)]"

@@ -8,6 +8,7 @@ import OrgSettingsModal from '@/components/OrgSettingsModal';
 import SpaceSettingsModal from '@/components/SpaceSettingsModal';
 import CollectionSettingsModal from '@/components/CollectionSettingsModal';
 import AuthModal from '@/components/AuthModal';
+import AdminModal from '@/components/AdminModal';
 import MembersModal from '@/components/MembersModal';
 import SortCollectionsModal from '@/components/SortCollectionsModal';
 import PromptModal from '@/components/PromptModal';
@@ -56,6 +57,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [allCollapsed, setAllCollapsed] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [membersModal, setMembersModal] = useState<
     | { type: 'space' }
@@ -108,7 +110,7 @@ export default function App() {
     });
   }, []);
 
-  const { user, loading: authLoading, login, register, logout } = useAuth(ready, bootUser);
+  const { user, loading: authLoading, login, register, loginWithGoogle, logout, refreshUser } = useAuth(ready, bootUser);
   const { theme, toggle: toggleTheme } = useTheme();
   const { browserOnline, available } = useOnlineStatus();
 
@@ -583,7 +585,7 @@ export default function App() {
         </button>
 
         {showAuth && (
-          <AuthModal onClose={() => setShowAuth(false)} onLogin={login} onRegister={register} />
+          <AuthModal onClose={() => setShowAuth(false)} onLogin={login} onRegister={register} onLoginWithGoogle={loginWithGoogle} />
         )}
         {showSettings && (
           <SettingsModal
@@ -591,6 +593,7 @@ export default function App() {
             onImportDone={handleImportDone}
             onServerChanged={() => { window.location.reload(); }}
             activeOrgId={activeOrgId}
+            user={user}
           />
         )}
       </div>
@@ -691,10 +694,16 @@ export default function App() {
           activeOrgId={activeOrgId}
           activeOrgName={orgs.find((o) => o.id === activeOrgId)?.name ?? personalName}
           onDeleteAllSpaces={handleDeleteAllSpaces}
+          user={sessionUser}
+          onUserChanged={() => void refreshUser()}
+          onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }}
         />
       )}
+      {showAdmin && sessionUser.isAdmin && (
+        <AdminModal currentUserId={sessionUser.id} onClose={() => setShowAdmin(false)} />
+      )}
       {showAuth && (
-        <AuthModal onClose={() => setShowAuth(false)} onLogin={login} onRegister={register} />
+        <AuthModal onClose={() => setShowAuth(false)} onLogin={login} onRegister={register} onLoginWithGoogle={loginWithGoogle} />
       )}
       {membersModal?.type === 'space' && (
         <MembersModal

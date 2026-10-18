@@ -1,133 +1,67 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createTestApp, generateTestToken } from './helpers.js';
+import { Hono } from 'hono';
+import { meRoutes } from '../src/api/routes/me.js';
 
-// Mock the database module
-vi.mock('../src/database/client.js', () => {
-  const users: any[] = [];
+const mockSession = vi.fn();
 
-  const mockDb = {
+vi.mock('../src/auth/auth.js', () => ({
+  auth: {
+    api: {
+      getSession: (...args: unknown[]) => mockSession(...args),
+    },
+  },
+}));
+
+vi.mock('../src/database/client.js', () => ({
+  getDb: () => ({
     select: () => ({
-      from: (table: any) => ({
-        where: (condition: any) => {
-          // Simple mock: return matching user or empty
-          return Promise.resolve(users.filter(() => true).slice(0, 1));
-        },
-      }),
-    }),
-    insert: (table: any) => ({
-      values: (data: any) => ({
-        returning: (cols?: any) => {
-          const newUser = {
+      from: () => ({
+        where: () => Promise.resolve([
+          {
             id: 'test-user-id-123',
-            email: data.email,
-            name: data.name,
-            passwordHash: data.passwordHash,
+            email: 'test@test.com',
+            name: 'Test User',
             avatarUrl: null,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
-          users.push(newUser);
-          if (cols) {
-            const projected: any = {};
-            for (const [key] of Object.entries(cols)) {
-              projected[key] = (newUser as any)[key];
-            }
-            return Promise.resolve([projected]);
-          }
-          return Promise.resolve([newUser]);
-        },
+            role: 'guest',
+          },
+        ]),
       }),
     }),
-  };
+  }),
+}));
 
-  return {
-    getDb: () => mockDb,
-  };
-});
-
-describe('Auth routes', () => {
-  const app = createTestApp();
-
-  describe('POST /api/auth/register', () => {
-    it('rejects invalid email', async () => {
-      const res = await app.request('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'not-an-email', password: '12345678', name: 'Test' }),
-      });
-      expect(res.status).toBe(400);
-    });
-
-    it('rejects short password', async () => {
-      const res = await app.request('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'test@test.com', password: '123', name: 'Test' }),
-      });
-      expect(res.status).toBe(400);
-    });
-
-    it('rejects missing name', async () => {
-      const res = await app.request('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'test@test.com', password: '12345678' }),
-      });
-      expect(res.status).toBe(400);
-    });
+describe('GET /api/auth/me', () => {
+  beforeEach(() => {
+    mockSession.mockReset();
   });
 
-  describe('POST /api/auth/login', () => {
-    it('rejects invalid email format', async () => {
-      const res = await app.request('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'bad', password: 'password123' }),
-      });
-      expect(res.status).toBe(400);
-    });
+  const app = new Hono();
+  app.route('/api/auth/me', meRoutes);
 
-    it('rejects missing password', async () => {
-      const res = await app.request('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'test@test.com' }),
-      });
-      expect(res.status).toBe(400);
-    });
+  it('rejects requests without token', async () => {
+    const res = await app.request('/api/auth/me');
+    expect(res.status).toBe(401);
   });
 
-  describe('POST /api/auth/refresh', () => {
-    it('rejects missing refresh token', async () => {
-      const res = await app.request('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      expect(res.status).toBe(400);
+  it('rejects requests with invalid token', async () => {
+    mockSession.mockResolvedValue(null);
+    const res = await app.request('/api/auth/me', {
+      headers: { Authorization: 'Bearer invalid-token' },
     });
-
-    it('rejects invalid refresh token', async () => {
-      const res = await app.request('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'garbage-token' }),
-      });
-      expect(res.status).toBe(401);
-    });
+    expect(res.status).toBe(401);
   });
 
-  describe('GET /api/auth/me', () => {
-    it('rejects requests without token', async () => {
-      const res = await app.request('/api/auth/me');
-      expect(res.status).toBe(401);
+  it('returns the current user for a valid session', async () => {
+    mockSession.mockResolvedValue({
+      user: { id: 'test-user-id-123', email: 'test@test.com', role: 'guest' },
+      session: { id: 'session-1' },
     });
-
-    it('rejects requests with invalid token', async () => {
-      const res = await app.request('/api/auth/me', {
-        headers: { Authorization: 'Bearer invalid-token' },
-      });
-      expect(res.status).toBe(401);
+    const res = await app.request('/api/auth/me', {
+      headers: { Authorization: 'Bearer valid-token' },
     });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.user.email).toBe('test@test.com');
+    expect(body.user.role).toBe('guest');
   });
 });

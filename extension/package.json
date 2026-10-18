@@ -2,7 +2,7 @@
   "name": "collectab",
   "description": "A Toby-like bookmark manager with organizations, collections, and real-time sync",
   "private": true,
-  "version": "0.2.18",
+  "version": "0.2.19",
   "type": "module",
   "scripts": {
     "dev": "wxt",
