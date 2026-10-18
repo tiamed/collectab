@@ -18,8 +18,8 @@ export function useTheme() {
     } catch {
       return;
     }
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
-    void chrome.storage.local.get(THEME_STORAGE_KEY).then((stored) => {
+    if (typeof browser === 'undefined' || !browser.storage?.local) return;
+    void browser.storage.local.get(THEME_STORAGE_KEY).then((stored) => {
       const saved = stored[THEME_STORAGE_KEY];
       if (!isTheme(saved)) return;
       setThemeState(saved);

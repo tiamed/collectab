@@ -29,8 +29,8 @@ export function persistTheme(theme: Theme) {
   } catch {
     // ignore
   }
-  if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-    void chrome.storage.local.set({ [STORAGE_KEY]: theme });
+  if (typeof browser !== 'undefined' && browser.storage?.local) {
+    void browser.storage.local.set({ [STORAGE_KEY]: theme });
   }
 }
 

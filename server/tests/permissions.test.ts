@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getEffectiveRole, canEditSpace, isSpaceOwner } from '../src/api/routes/permissions.js';
+import { getEffectiveRole, canEditSpace, isSpaceOwner, hasSpaceAccess } from '../src/api/routes/permissions.js';
 
 type Row = Record<string, unknown>;
 
@@ -95,11 +95,12 @@ describe('getEffectiveRole', () => {
     expect(await getEffectiveRole(db, space, 'member-user')).toBe('viewer');
   });
 
-  it('Org: no space_members row → null', async () => {
+  it('Org: no space_members row → null even if they could be an org member', async () => {
     enqueue([{ ownerId: 'org-owner' }], []);
     const db = makeDb() as any;
     const space = { id: 's1', ownerId: 'creator', orgId: 'org1' };
-    expect(await getEffectiveRole(db, space, 'outsider')).toBeNull();
+    expect(await getEffectiveRole(db, space, 'org-member')).toBeNull();
+    expect(await hasSpaceAccess(db, space, 'org-member')).toBe(false);
   });
 
   it('isSpaceOwner / canEditSpace wrappers', async () => {

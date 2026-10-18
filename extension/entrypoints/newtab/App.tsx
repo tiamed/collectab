@@ -8,6 +8,7 @@ import OrgSettingsModal from '@/components/OrgSettingsModal';
 import SpaceSettingsModal from '@/components/SpaceSettingsModal';
 import CollectionSettingsModal from '@/components/CollectionSettingsModal';
 import AuthModal from '@/components/AuthModal';
+import AdminModal from '@/components/AdminModal';
 import MembersModal from '@/components/MembersModal';
 import SortCollectionsModal from '@/components/SortCollectionsModal';
 import PromptModal from '@/components/PromptModal';
@@ -15,6 +16,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import DeleteOrgModal from '@/components/DeleteOrgModal';
 import { useOrganizations, useSpaces, useCollections, useCollectionBookmarks } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { useTheme } from '@/hooks/useTheme';
 import { loadApiBase, isLoggedIn, createCollection, createSpace, createOrganization, updateOrganization, deleteOrganization, updateSpace, deleteSpace, deleteAllSpaces, updateCollection, deleteCollection } from '@/lib/api';
 import type { Bookmark, User, Organization, Space, Collection } from '@/lib/api';
@@ -35,26 +37,27 @@ export default function App() {
 
   const setActiveOrgId = (id: string | null) => {
     setActiveOrgIdRaw(id);
-    if (id) chrome.storage.local.set({ [STORAGE_KEY_ORG]: id });
-    else chrome.storage.local.remove(STORAGE_KEY_ORG);
+    if (id) browser.storage.local.set({ [STORAGE_KEY_ORG]: id });
+    else browser.storage.local.remove(STORAGE_KEY_ORG);
   };
 
   const setActiveSpaceId = (id: string | null) => {
     setActiveSpaceIdRaw(id);
-    if (id) chrome.storage.local.set({ [STORAGE_KEY_SPACE]: id });
-    else chrome.storage.local.remove(STORAGE_KEY_SPACE);
+    if (id) browser.storage.local.set({ [STORAGE_KEY_SPACE]: id });
+    else browser.storage.local.remove(STORAGE_KEY_SPACE);
   };
   const [personalName, setPersonalNameRaw] = useState('Personal');
 
   const setPersonalName = (name: string) => {
     setPersonalNameRaw(name);
-    chrome.storage.local.set({ [STORAGE_KEY_PERSONAL_NAME]: name });
+    browser.storage.local.set({ [STORAGE_KEY_PERSONAL_NAME]: name });
   };
 
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [allCollapsed, setAllCollapsed] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [membersModal, setMembersModal] = useState<
     | { type: 'space' }
@@ -96,18 +99,20 @@ export default function App() {
     Promise.all([
       loadApiBase(),
       ensureDataCacheLoaded(),
-      chrome.storage.local.get([STORAGE_KEY_ORG, STORAGE_KEY_SPACE, STORAGE_KEY_PERSONAL_NAME]),
+      browser.storage.local.get([STORAGE_KEY_ORG, STORAGE_KEY_SPACE, STORAGE_KEY_PERSONAL_NAME]),
     ]).then(([, , stored]) => {
-      if (stored[STORAGE_KEY_ORG]) setActiveOrgIdRaw(stored[STORAGE_KEY_ORG]);
-      if (stored[STORAGE_KEY_SPACE]) setActiveSpaceIdRaw(stored[STORAGE_KEY_SPACE]);
-      if (stored[STORAGE_KEY_PERSONAL_NAME]) setPersonalNameRaw(stored[STORAGE_KEY_PERSONAL_NAME]);
+      const s = stored as Record<string, string | undefined>;
+      if (s[STORAGE_KEY_ORG]) setActiveOrgIdRaw(s[STORAGE_KEY_ORG] as string);
+      if (s[STORAGE_KEY_SPACE]) setActiveSpaceIdRaw(s[STORAGE_KEY_SPACE] as string);
+      if (s[STORAGE_KEY_PERSONAL_NAME]) setPersonalNameRaw(s[STORAGE_KEY_PERSONAL_NAME] as string);
       if (isLoggedIn()) setBootUser(getCachedUser());
       setReady(true);
     });
   }, []);
 
-  const { user, loading: authLoading, login, register, loginWithGoogle, logout } = useAuth(ready, bootUser);
+  const { user, loading: authLoading, login, register, loginWithGoogle, logout, refreshUser } = useAuth(ready, bootUser);
   const { theme, toggle: toggleTheme } = useTheme();
+  const { browserOnline, available } = useOnlineStatus();
 
   const sessionUser = user ?? bootUser;
   const loggedIn = !!sessionUser;
@@ -143,6 +148,7 @@ export default function App() {
   const crdtOrderRef = useRef<CrdtOrderManager | null>(null);
   const bookmarksRef = useRef(bookmarksByCollection);
   const collectionsRef = useRef(collections);
+  const wasUnavailableRef = useRef(false);
   bookmarksRef.current = bookmarksByCollection;
   collectionsRef.current = collections;
 
@@ -152,10 +158,19 @@ export default function App() {
   const removedIdsRef = useRef<Set<string>>(new Set());
 
   const applyCrdtOrderToUi = useCallback((mgr: CrdtOrderManager) => {
+    const cols = collectionsRef.current;
+    const bks = bookmarksRef.current;
+    const colIds = new Set(cols.map((c) => c.id));
+    const bkKeys = Object.keys(bks);
+    // Space switch can leave collections from B and bookmarks from A in refs
+    // for a tick; reconciling that against the new CRDT snapshot writes empty
+    // lists into the new space and flashes the UI.
+    if (bkKeys.length > 0 && !bkKeys.some((k) => colIds.has(k))) return;
+
     const reconciled = reconcileCrdtOrder(
       mgr,
-      collectionsRef.current,
-      bookmarksRef.current,
+      cols,
+      bks,
       removedIdsRef.current,
     );
     for (const [colId, merged] of Object.entries(reconciled)) {
@@ -166,7 +181,7 @@ export default function App() {
   // CRDT WS lives in the newtab page (not MV3 SW) — Port to background often fails with
   // "Receiving end does not exist" when the service worker is asleep/unloaded.
   useEffect(() => {
-    if (!activeSpaceId || !loggedIn) return;
+    if (!activeSpaceId || !loggedIn || !available) return;
 
     const mgr = new CrdtOrderManager();
     const client = new CrdtSyncClient();
@@ -197,7 +212,20 @@ export default function App() {
       client.disconnect();
       crdtOrderRef.current = null;
     };
-  }, [activeSpaceId, loggedIn, applyCrdtOrderToUi]);
+  }, [activeSpaceId, loggedIn, available, applyCrdtOrderToUi]);
+
+  useEffect(() => {
+    if (!available) {
+      wasUnavailableRef.current = true;
+      return;
+    }
+    if (!wasUnavailableRef.current || !loggedIn) return;
+    wasUnavailableRef.current = false;
+    void refetchOrgs();
+    void refetchSpaces();
+    void refetchCollections();
+    void refetchBookmarks();
+  }, [available, loggedIn, refetchOrgs, refetchSpaces, refetchCollections, refetchBookmarks]);
 
   // REST bootstrap only after bookmarks are loaded (avoid empty CRDT lists that break move()).
   useEffect(() => {
@@ -220,18 +248,18 @@ export default function App() {
   const activeSpace = spaces.find((s) => s.id === activeSpaceId);
   const activeOrg = orgs.find((o) => o.id === activeOrgId);
 
-  // Derive UI permissions from org role + space ownership (server remains the backstop)
-  const isSpaceOwner = !!activeSpace && (
-    activeSpace.ownerId === sessionUser?.id || activeOrg?.role === 'owner'
-  );
-  const canEditContent = isSpaceOwner || activeOrg?.role === 'admin';
+  // Space-level role from GET /spaces. Org membership alone is not enough.
+  const mySpaceRole = activeSpace?.myRole
+    ?? (activeSpace?.ownerId === sessionUser?.id || activeOrg?.role === 'owner' ? 'owner' : null);
+  const isSpaceOwner = mySpaceRole === 'owner';
+  const canEditContent = mySpaceRole === 'owner' || mySpaceRole === 'editor';
   // TopBar manages space members — space owners only (org or personal)
   const canManageSpaceMembers = isSpaceOwner;
   const canManageSpace = isSpaceOwner;
   const canChangeOrgRoles = activeOrg?.role === 'owner';
   const canCreateSpace = !activeOrgId || activeOrg?.role === 'owner' || activeOrg?.role === 'admin';
   const canManageSpaceFn = (space: Space) =>
-    space.ownerId === sessionUser?.id || activeOrg?.role === 'owner';
+    space.myRole === 'owner' || space.ownerId === sessionUser?.id || activeOrg?.role === 'owner';
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -573,7 +601,18 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-[var(--background)]">
+    <div className="flex h-screen w-full flex-col bg-[var(--background)]">
+      {loggedIn && !available && (
+        <div
+          role="status"
+          className="shrink-0 border-b border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-center text-[11px] leading-tight text-[var(--muted)]"
+        >
+          {browserOnline
+            ? "Can't reach server — showing cached data. Changes won't save until the server is back"
+            : "Offline — showing cached data. Changes won't save until you're back online"}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
       <Sidebar
         orgs={orgs}
         activeOrgId={activeOrgId}
@@ -645,6 +684,7 @@ export default function App() {
           canEditContent={canEditContent}
         />
       </main>
+      </div>
 
       {showSettings && (
         <SettingsModal
@@ -654,7 +694,13 @@ export default function App() {
           activeOrgId={activeOrgId}
           activeOrgName={orgs.find((o) => o.id === activeOrgId)?.name ?? personalName}
           onDeleteAllSpaces={handleDeleteAllSpaces}
+          user={sessionUser}
+          onUserChanged={() => void refreshUser()}
+          onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }}
         />
+      )}
+      {showAdmin && sessionUser.isAdmin && (
+        <AdminModal currentUserId={sessionUser.id} onClose={() => setShowAdmin(false)} />
       )}
       {showAuth && (
         <AuthModal onClose={() => setShowAuth(false)} onLogin={login} onRegister={register} onLoginWithGoogle={loginWithGoogle} />
@@ -664,6 +710,14 @@ export default function App() {
           spaceId={activeSpaceId}
           spaceName={activeSpace?.name ?? ''}
           isOrgSpace={!!activeOrgId}
+          parentOrgId={activeOrgId}
+          parentOrgName={activeOrg?.name}
+          canAddOrgMembers={activeOrg?.role === 'owner' || activeOrg?.role === 'admin'}
+          onOpenOrgMembers={
+            activeOrg
+              ? () => setMembersModal({ type: 'org', orgId: activeOrg.id, orgName: activeOrg.name })
+              : undefined
+          }
           onClose={() => setMembersModal(null)}
           canChangeRoles
         />

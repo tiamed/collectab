@@ -1,12 +1,12 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { X, Server } from 'lucide-react';
-import { getApiBase, setApiBase } from '@/lib/api';
-import type { User } from '@/lib/api';
+import { getApiBase, getServerAuthConfig, parseInviteCode, setApiBase, DEFAULT_API_BASE } from '@/lib/api';
+import type { ServerAuthConfig, User } from '@/lib/api';
 
 interface AuthModalProps {
   onClose: () => void;
   onLogin: (email: string, password: string) => Promise<User>;
-  onRegister: (email: string, password: string, name: string) => Promise<User>;
+  onRegister: (email: string, password: string, name: string, inviteCode?: string) => Promise<User>;
   onLoginWithGoogle?: () => Promise<User>;
 }
 
@@ -16,11 +16,37 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [serverUrl, setServerUrl] = useState(getApiBase());
   const [showServer, setShowServer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [config, setConfig] = useState<ServerAuthConfig | null>(null);
+  const [configFor, setConfigFor] = useState(getApiBase());
+
+  useEffect(() => {
+    let cancelled = false;
+    void getServerAuthConfig().then((c) => {
+      if (!cancelled) setConfig(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [configFor]);
+
+  const applyServerUrl = async () => {
+    const trimmed = serverUrl.trim().replace(/\/+$/, '');
+    if (trimmed && trimmed !== getApiBase()) {
+      // Session/cache cleared; continue on the new server
+      await setApiBase(trimmed);
+      setServerUrl(getApiBase());
+      setConfigFor(getApiBase());
+    }
+  };
+
+  const inviteOnly = config?.inviteMode === 'invite-only';
+  const showGoogle = !!onLoginWithGoogle && config?.google === true;
 
   const handleGoogleLogin = async () => {
     if (!onLoginWithGoogle) return;
@@ -28,6 +54,7 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
     setHint(null);
     setLoading(true);
     try {
+      await applyServerUrl();
       await onLoginWithGoogle();
       onClose();
     } catch (err: any) {
@@ -52,16 +79,12 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
     setHint(null);
     setLoading(true);
     try {
-      const trimmed = serverUrl.trim().replace(/\/+$/, '');
-      if (trimmed && trimmed !== getApiBase()) {
-        await setApiBase(trimmed);
-        // Session/cache cleared; continue to login on the new server
-      }
+      await applyServerUrl();
 
       if (mode === 'login') {
         await onLogin(email, password);
       } else {
-        await onRegister(email, password, name);
+        await onRegister(email, password, name, inviteCode ? parseInviteCode(inviteCode) : undefined);
       }
       onClose();
     } catch (err: any) {
@@ -74,7 +97,11 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
       const isAuth =
         /invalid|unauthorized|not found|incorrect|credentials|401|403/i.test(msg);
 
-      if (mode === 'login') {
+      if (/too many/i.test(msg)) {
+        setHint('Too many attempts. Wait a few seconds and try again.');
+      } else if (mode === 'register' && /invite/i.test(msg)) {
+        setHint('Check the invite code, or ask the server admin for a new invite.');
+      } else if (mode === 'login') {
         if (isNetwork) {
           setHint('Cannot reach the server. Check the Server URL below, or make sure your server is running.');
           setShowServer(true);
@@ -157,6 +184,23 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
               minLength={mode === 'register' ? 8 : undefined}
             />
           </div>
+          {mode === 'register' && (
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-[var(--muted)]">
+                Invite code{inviteOnly ? '' : ' (optional)'}
+              </label>
+              <input
+                type="text"
+                className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 font-mono text-xs text-[var(--foreground)] outline-none placeholder:font-sans placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                placeholder="Code or invite link"
+                required={inviteOnly}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+          )}
 
           {/* Server URL */}
           <div>
@@ -175,7 +219,8 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
                 className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="http://localhost:3001/api"
+                onBlur={() => void applyServerUrl()}
+                placeholder={DEFAULT_API_BASE}
               />
             )}
             {!showServer && (
@@ -191,7 +236,7 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
           </div>
         )}
 
-        {onLoginWithGoogle && (
+        {showGoogle && (
           <div>
             <button
               type="button"
@@ -226,7 +271,7 @@ export default function AuthModal({ onClose, onLogin, onRegister, onLoginWithGoo
         <p className="mt-3 text-center text-[11px] text-[var(--muted)]">
           {mode === 'login' ? (
             <>
-              Don't have an account?{' '}
+              {inviteOnly ? 'Have an invite code?' : "Don't have an account?"}{' '}
               <button
                 type="button"
                 onClick={() => { setMode('register'); setError(null); setHint(null); }}

@@ -317,6 +317,26 @@ describe('Permission role matrix', () => {
     expect(res.status).toBe(201);
   });
 
+  it('shared personal space member → list collections = 200', async () => {
+    roles.set(OUTSIDER, 'viewer');
+    expectSpace('personal-space');
+    const res = await app.request('/api/collections?spaceId=personal-space', {
+      headers: hdr(OUTSIDER, 'outsider@test.com'),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.collections.length).toBeGreaterThan(0);
+  });
+
+  it('outsider → personal space collections = 403', async () => {
+    roles.set(OUTSIDER, null);
+    expectSpace('personal-space');
+    const res = await app.request('/api/collections?spaceId=personal-space', {
+      headers: hdr(OUTSIDER, 'outsider@test.com'),
+    });
+    expect(res.status).toBe(403);
+  });
+
   it('remove org member cascades space_members', async () => {
     expect(spaceMembers.some((m) => m.userId === MEMBER)).toBe(true);
     const res = await app.request(`/api/orgs/${ORG_ID}/members/${MEMBER}`, {

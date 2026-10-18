@@ -11,6 +11,8 @@ import {
 } from '@/lib/api';
 import type { OrgMember, SpaceMember } from '@/lib/api';
 
+const ORG_MEMBER_REQUIRED = 'User must be an org member first';
+
 interface MembersModalProps {
   /** When set, manage org members; otherwise manage space members via spaceId */
   orgId?: string | null;
@@ -22,9 +24,28 @@ interface MembersModalProps {
   canChangeRoles?: boolean;
   /** Space is inside an org — show invite hint about org membership */
   isOrgSpace?: boolean;
+  /** Parent org for org-space invites (space mode) */
+  parentOrgId?: string | null;
+  parentOrgName?: string;
+  /** Caller can add people to the parent org */
+  canAddOrgMembers?: boolean;
+  /** Open the org members modal from a space invite */
+  onOpenOrgMembers?: () => void;
 }
 
-export default function MembersModal({ orgId, orgName, spaceId, spaceName, onClose, canChangeRoles = true, isOrgSpace = false }: MembersModalProps) {
+export default function MembersModal({
+  orgId,
+  orgName,
+  spaceId,
+  spaceName,
+  onClose,
+  canChangeRoles = true,
+  isOrgSpace = false,
+  parentOrgId = null,
+  parentOrgName,
+  canAddOrgMembers = false,
+  onOpenOrgMembers,
+}: MembersModalProps) {
   const mousedownOnBackdropRef = useRef(false);
   const isOrgMode = !!orgId;
 
@@ -35,6 +56,7 @@ export default function MembersModal({ orgId, orgName, spaceId, spaceName, onClo
   const [role, setRole] = useState<string>(isOrgMode ? 'member' : 'viewer');
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsOrgMember, setNeedsOrgMember] = useState(false);
 
   const fetchMembers = async () => {
     try {
@@ -62,6 +84,7 @@ export default function MembersModal({ orgId, orgName, spaceId, spaceName, onClo
     if (!email.trim()) return;
     setAdding(true);
     setError(null);
+    setNeedsOrgMember(false);
     try {
       if (isOrgMode) {
         await addOrgMember(orgId!, email.trim(), role as 'admin' | 'member');
@@ -71,7 +94,26 @@ export default function MembersModal({ orgId, orgName, spaceId, spaceName, onClo
       setEmail('');
       fetchMembers();
     } catch (err: any) {
-      setError(err.message);
+      const message = err?.message || 'Failed to add member';
+      setError(message);
+      setNeedsOrgMember(message.includes(ORG_MEMBER_REQUIRED));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleAddToOrgThenSpace = async () => {
+    if (!email.trim() || !parentOrgId || !spaceId) return;
+    setAdding(true);
+    setError(null);
+    setNeedsOrgMember(false);
+    try {
+      await addOrgMember(parentOrgId, email.trim(), 'member');
+      await addSpaceMember(spaceId, email.trim(), role as 'editor' | 'viewer');
+      setEmail('');
+      fetchMembers();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to add member');
     } finally {
       setAdding(false);
     }
@@ -129,11 +171,23 @@ export default function MembersModal({ orgId, orgName, spaceId, spaceName, onClo
 
         {isOrgMode ? (
           <p className="mb-3 text-[10px] text-[var(--muted)]">
-            Org members can be granted access to spaces. New org members are not added to existing spaces automatically.
+            Org members cannot see a space until they are invited to it. Inviting someone to the org does not add them to existing spaces.
           </p>
         ) : isOrgSpace ? (
           <p className="mb-3 text-[10px] text-[var(--muted)]">
-            Invite people who are already org members. Editor can edit content; viewer is read-only.
+            People must be in the organization before you can invite them here. They will not see this space until invited. Editor can edit; viewer is read-only.
+            {onOpenOrgMembers && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={onOpenOrgMembers}
+                  className="text-[var(--accent)] underline-offset-2 hover:underline"
+                >
+                  Manage org members
+                </button>
+              </>
+            )}
           </p>
         ) : null}
 
@@ -167,7 +221,34 @@ export default function MembersModal({ orgId, orgName, spaceId, spaceName, onClo
           </button>
         </form>
 
-        {error && <p className="mb-3 text-[11px] text-red-400">{error}</p>}
+        {error && (
+          <div className="mb-3 space-y-2 rounded border border-red-400/30 bg-red-400/5 px-3 py-2">
+            <p className="text-[11px] text-red-400">{error}</p>
+            {needsOrgMember && !isOrgMode && (
+              <div className="flex flex-wrap items-center gap-2">
+                {canAddOrgMembers && parentOrgId && (
+                  <button
+                    type="button"
+                    disabled={adding || !email.trim()}
+                    onClick={() => void handleAddToOrgThenSpace()}
+                    className="rounded bg-[var(--accent)] px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                  >
+                    Add to {parentOrgName || 'org'} & invite
+                  </button>
+                )}
+                {onOpenOrgMembers && (
+                  <button
+                    type="button"
+                    onClick={onOpenOrgMembers}
+                    className="rounded px-2.5 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--background)]"
+                  >
+                    Open org members
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Member list */}
         <div className="max-h-60 space-y-1 overflow-y-auto">

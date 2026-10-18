@@ -1,12 +1,17 @@
+# Local:      docker compose up -d               (http://localhost:3001/api)
+# Production: cp server/.env.example .env, edit it, then
+#             docker compose up -d  behind an HTTPS reverse proxy (see docs/deployment.md)
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: collectab
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    # Bound to loopback only; the server reaches it over the compose network.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,13 +23,21 @@ services:
   server:
     image: ghcr.io/tiamed/collectab/server:latest
     build: ./server
+    restart: unless-stopped
+    # Loopback only: put Caddy/nginx in front for HTTPS. Use "3001:3001" to expose directly on a LAN.
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/collectab
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-better-auth-secret-change-in-production-32chars}
-      BETTER_AUTH_URL: http://localhost:3001
-      CORS_ORIGIN: "*"
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3001}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      EXTENSION_IDS: ${EXTENSION_IDS:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
+      SESSION_EXPIRES_DAYS: ${SESSION_EXPIRES_DAYS:-30}
+      SESSION_UPDATE_AGE_HOURS: ${SESSION_UPDATE_AGE_HOURS:-24}
       DEFAULT_ROLE: ${DEFAULT_ROLE:-guest}
       ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
       ROLE_QUOTAS: ${ROLE_QUOTAS:-guest=10,user=500,admin=unlimited}
@@ -34,6 +47,11 @@ services:
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
       OAUTH_GOOGLE_CLIENT_ID: ${OAUTH_GOOGLE_CLIENT_ID:-}
       OAUTH_GOOGLE_CLIENT_SECRET: ${OAUTH_GOOGLE_CLIENT_SECRET:-}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      PRIVACY_OPERATOR_NAME: ${PRIVACY_OPERATOR_NAME:-}
+      PRIVACY_CONTACT_EMAIL: ${PRIVACY_CONTACT_EMAIL:-}
+      EXTENSION_INSTALL_URL: ${EXTENSION_INSTALL_URL:-}
       PORT: 3001
     depends_on:
       postgres:

@@ -12,20 +12,25 @@ interface IconDisplayProps {
   imgClassName?: string;
 }
 
-export default function IconDisplay({ icon, fallback, className, imgClassName }: IconDisplayProps) {
-  const [failed, setFailed] = useState(false);
-  const value = icon?.trim() || fallback || '';
-  if (!value) return null;
+export default function IconDisplay({ icon, fallback = '🏢', className, imgClassName }: IconDisplayProps) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const value = icon?.trim() || '';
+  const failed = Boolean(value) && failedSrc === value;
+  if (!value && !fallback) return null;
 
-  if (isImageUrl(value) && !failed) {
+  if (value && isImageUrl(value) && !failed) {
     return (
       <img
         src={value}
         alt=""
         className={imgClassName ?? 'size-4 object-contain'}
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(value)}
       />
     );
   }
-  return <span className={className ?? 'flex size-4 items-center justify-center text-sm leading-none'}>{value}</span>;
+
+  // Failed image URLs fall back to emoji/text — never render the raw URL.
+  const display = value && !isImageUrl(value) ? value : fallback;
+  if (!display) return null;
+  return <span className={className ?? 'flex size-4 items-center justify-center text-sm leading-none'}>{display}</span>;
 }

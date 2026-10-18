@@ -1,10 +1,10 @@
+import { browser } from 'wxt/browser';
 import type { Space, Collection, Bookmark, User, Organization } from './api';
 
 const CACHE_KEY = 'data_cache_v2';
 const MAX_SPACES = 12;
 const MAX_COLLECTION_SETS = 30;
 const MAX_BOOKMARK_SPACES = 30;
-const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — long enough for idle sessions (e.g. watching a video)
 
 interface CacheEntry<T> {
   data: T;
@@ -36,18 +36,22 @@ let loaded = false;
 let loadPromise: Promise<void> | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+function getStorageLocal() {
+  const browserStorage = (browser as unknown as { storage?: { local?: typeof browser.storage.local } })
+    ?.storage?.local;
+  if (browserStorage) return browserStorage;
+  const chromeStorage = (globalThis as unknown as { chrome?: { storage?: { local?: typeof browser.storage.local } } })
+    .chrome?.storage?.local;
+  return chromeStorage;
+}
+
 function getEntry<T>(record: Record<string, CacheEntry<T>>, key: string): T | null {
   const entry = record[key];
   if (!entry) return null;
-  // Still usable for instant display even if past TTL; hooks always refresh in background
   return entry.data;
 }
 
 function pruneRecord<T>(record: Record<string, CacheEntry<T>>, max: number) {
-  const now = Date.now();
-  for (const [key, entry] of Object.entries(record)) {
-    if (now - entry.updatedAt > TTL_MS) delete record[key];
-  }
   const entries = Object.entries(record).sort((a, b) => b[1].updatedAt - a[1].updatedAt);
   if (entries.length <= max) return;
   for (const [key] of entries.slice(max)) {
@@ -56,7 +60,8 @@ function pruneRecord<T>(record: Record<string, CacheEntry<T>>, max: number) {
 }
 
 function scheduleSave(immediate = false): Promise<void> {
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) return Promise.resolve();
+  const storageLocal = getStorageLocal();
+  if (!storageLocal) return Promise.resolve();
   if (saveTimer) clearTimeout(saveTimer);
 
   const write = () => {
@@ -64,7 +69,7 @@ function scheduleSave(immediate = false): Promise<void> {
     pruneRecord(memory.spaces, MAX_SPACES);
     pruneRecord(memory.collections, MAX_COLLECTION_SETS);
     pruneRecord(memory.bookmarksBySpace, MAX_BOOKMARK_SPACES);
-    return chrome.storage.local.set({ [CACHE_KEY]: memory }).catch(() => {});
+    return storageLocal.set({ [CACHE_KEY]: memory }).catch(() => {});
   };
 
   if (immediate) {
@@ -96,8 +101,9 @@ export async function clearDataCache(): Promise<void> {
   memory = emptyCache();
   loaded = true;
   loadPromise = null;
-  if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-    await chrome.storage.local.remove([CACHE_KEY, 'data_cache_v1']).catch(() => {});
+  const storageLocal = getStorageLocal();
+  if (storageLocal) {
+    await storageLocal.remove([CACHE_KEY, 'data_cache_v1']).catch(() => {});
   }
 }
 
@@ -106,8 +112,9 @@ export async function ensureDataCacheLoaded() {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     try {
-      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        const stored = await chrome.storage.local.get([CACHE_KEY, 'data_cache_v1']);
+      const storageLocal = getStorageLocal();
+      if (storageLocal) {
+        const stored = await storageLocal.get([CACHE_KEY, 'data_cache_v1']);
         if (stored[CACHE_KEY]) {
           memory = { ...emptyCache(), ...stored[CACHE_KEY] };
           if (!memory.bookmarksBySpace) memory.bookmarksBySpace = {};
@@ -125,7 +132,7 @@ export async function ensureDataCacheLoaded() {
             bookmarksBySpace: {},
           };
           scheduleSave();
-          chrome.storage.local.remove('data_cache_v1').catch(() => {});
+          storageLocal.remove('data_cache_v1').catch(() => {});
         }
       }
     } catch {
@@ -135,6 +142,10 @@ export async function ensureDataCacheLoaded() {
     }
   })();
   return loadPromise;
+}
+
+export function isDataCacheLoaded(): boolean {
+  return loaded;
 }
 
 export function getCachedUser(): User | null {

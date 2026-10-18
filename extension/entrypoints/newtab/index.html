@@ -5,16 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>New Tab</title>
     <!-- Sync theme before first paint — no visibility:hidden (avoids blank/stuck page). Only sets data-theme on an explicit choice; otherwise CSS @media (prefers-color-scheme) follows the OS and stays live. -->
-    <script>
-      (function () {
-        try {
-          var t = localStorage.getItem('theme');
-          if (t === 'light' || t === 'dark') {
-            document.documentElement.setAttribute('data-theme', t);
-          }
-        } catch (e) {}
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
     <!-- Critical background before CSS bundle loads — mirrors style.css :root/[data-theme]/@media. -->
     <style>
       html { background-color: #ffffff; }
