@@ -153,19 +153,19 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)]" onMouseDown={handleBackdropMouseDown} onClick={handleBackdropClick}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] p-4" onMouseDown={handleBackdropMouseDown} onClick={handleBackdropClick}>
       <div
-        className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 shadow-xl"
+        className="flex max-h-[min(90vh,calc(100vh-2rem))] w-full max-w-md flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-5 flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-6">
           <h3 className="text-sm font-semibold text-[var(--foreground)]">Settings</h3>
           <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--foreground)]">
             <X className="size-4" />
           </button>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 pb-1">
           {user && (
             <div>
               <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-[var(--muted)]">
@@ -392,7 +392,7 @@ export default function SettingsModal({ onClose, onImportDone, onServerChanged, 
           )}
         </div>
 
-        <div className="mt-5 flex justify-end">
+        <div className="flex shrink-0 justify-end border-t border-[var(--border)] px-6 py-3">
           <button
             onClick={onClose}
             className="rounded px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--background)]"
