@@ -14,12 +14,14 @@ import SortCollectionsModal from '@/components/SortCollectionsModal';
 import PromptModal from '@/components/PromptModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import DeleteOrgModal from '@/components/DeleteOrgModal';
-import { useOrganizations, useSpaces, useCollections, useCollectionBookmarks } from '@/hooks/useApi';
+import SearchResults, { type SearchScope } from '@/components/SearchResults';
+import { useOrganizations, useSpaces, useCollections, useCollectionBookmarks, useBookmarkSearch } from '@/hooks/useApi';
 import { useAuth } from '@/hooks/useAuth';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { useTheme } from '@/hooks/useTheme';
 import { loadApiBase, isLoggedIn, createCollection, createSpace, createOrganization, updateOrganization, deleteOrganization, updateSpace, deleteSpace, deleteAllSpaces, updateCollection, deleteCollection } from '@/lib/api';
-import type { Bookmark, User, Organization, Space, Collection } from '@/lib/api';
+import type { Bookmark, User, Organization, Space, Collection, SearchResult } from '@/lib/api';
+import { searchTerms, groupSearchResults } from '@/lib/search';
 import { CrdtOrderManager } from '@/lib/crdt-order-mgr';
 import { CrdtSyncClient } from '@/lib/crdt-sync-port';
 import { collectCrdtIds, diffRemovedIds, reconcileCrdtOrder } from '@/lib/crdt-reconcile';
@@ -124,6 +126,9 @@ export default function App() {
   // restored selection while the list is still empty/loading.
   useEffect(() => {
     if (spacesLoading) return;
+    // Right after an org switch `spaces` still holds the previous org's list;
+    // acting on it would overwrite a space chosen in the new org.
+    if (spaces.some((s) => (s.orgId ?? null) !== (activeOrgId ?? null))) return;
     if (spaces.length > 0) {
       if (!activeSpaceId || !spaces.find((s) => s.id === activeSpaceId)) {
         setActiveSpaceId(spaces[0].id);
@@ -131,7 +136,7 @@ export default function App() {
     } else if (activeSpaceId) {
       setActiveSpaceId(null);
     }
-  }, [spaces, spacesLoading, activeSpaceId]);
+  }, [spaces, spacesLoading, activeSpaceId, activeOrgId]);
 
   const collectionIds = useMemo(() => collections.map((c) => c.id), [collections]);
   const {
@@ -272,25 +277,70 @@ export default function App() {
   }, [bookmarksByCollection]);
 
   const filteredBookmarks = useMemo(() => {
+    if (!tagFilter) return bookmarksByCollection;
     const result: Record<string, Bookmark[]> = {};
     for (const [colId, bks] of Object.entries(bookmarksByCollection)) {
-      let filtered = bks;
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        filtered = filtered.filter(
-          (b) =>
-            b.title.toLowerCase().includes(q) ||
-            b.url.toLowerCase().includes(q) ||
-            (b.description?.toLowerCase().includes(q)),
-        );
-      }
-      if (tagFilter) {
-        filtered = filtered.filter((b) => b.tags?.includes(tagFilter));
-      }
-      result[colId] = filtered;
+      result[colId] = bks.filter((b) => b.tags?.includes(tagFilter));
     }
     return result;
-  }, [bookmarksByCollection, searchQuery, tagFilter]);
+  }, [bookmarksByCollection, tagFilter]);
+
+  const searchTermList = useMemo(() => searchTerms(searchQuery), [searchQuery]);
+  const searching = searchTermList.length > 0;
+  const { results: searchResults, loading: searchLoading, offline: searchOffline } =
+    useBookmarkSearch(searchQuery, loggedIn);
+  const [searchScope, setSearchScope] = useState<SearchScope>('all');
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+  const [highlightBookmarkId, setHighlightBookmarkId] = useState<string | null>(null);
+
+  const searchMatchCounts = useMemo(() => {
+    if (!searching) return undefined;
+    const counts: Record<string, number> = {};
+    for (const r of searchResults) counts[r.space.id] = (counts[r.space.id] ?? 0) + 1;
+    return counts;
+  }, [searching, searchResults]);
+
+  const searchGroups = useMemo(() => {
+    const scoped = searchScope === 'space'
+      ? searchResults.filter((r) => r.space.id === activeSpaceId)
+      : searchResults;
+    return groupSearchResults(scoped, { activeSpaceId, activeOrgId });
+  }, [searchResults, searchScope, activeSpaceId, activeOrgId]);
+
+  const flatSearchResults = useMemo(() => searchGroups.flatMap((g) => g.results), [searchGroups]);
+
+  useEffect(() => {
+    setSearchActiveIndex(0);
+  }, [searchQuery, searchScope]);
+
+  const handleLocateResult = useCallback((space: SearchResult['space'], bookmarkId?: string) => {
+    if ((space.orgId ?? null) !== (activeOrgId ?? null)) setActiveOrgId(space.orgId ?? null);
+    setActiveSpaceId(space.id);
+    setTagFilter(null);
+    setSearchQuery('');
+    setHighlightBookmarkId(bookmarkId ?? null);
+  }, [activeOrgId]);
+
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!searching) return;
+    const n = flatSearchResults.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (n === 0) return;
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      setSearchActiveIndex((i) => (i + delta + n) % n);
+      return;
+    }
+    if (e.key === 'Enter') {
+      const r = flatSearchResults[Math.min(searchActiveIndex, n - 1)];
+      if (!r) return;
+      e.preventDefault();
+      if (e.shiftKey) handleLocateResult(r.space, r.bookmark.id);
+      else window.open(r.bookmark.url, '_blank', 'noopener,noreferrer');
+    }
+  }, [searching, flatSearchResults, searchActiveIndex, handleLocateResult]);
+
+  const clearHighlight = useCallback(() => setHighlightBookmarkId(null), []);
 
   const handleAddCollection = useCallback(async () => {
     if (!activeSpaceId) return;
@@ -634,6 +684,8 @@ export default function App() {
         onReorderSpaces={handleReorderSpaces}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        onSearchKeyDown={handleSearchKeyDown}
+        searchMatchCounts={searchMatchCounts}
         onOpenSettings={() => setShowSettings(true)}
         user={sessionUser}
         onAccountClick={() => setShowAuth(true)}
@@ -644,6 +696,27 @@ export default function App() {
         canCreateSpace={canCreateSpace}
       />
       <main className="flex flex-1 flex-col overflow-hidden">
+        {searching && (
+          <SearchResults
+            query={searchQuery}
+            terms={searchTermList}
+            groups={searchGroups}
+            totalCount={searchResults.length}
+            spaceCount={searchMatchCounts?.[activeSpaceId ?? ''] ?? 0}
+            scope={searchScope}
+            onScopeChange={setSearchScope}
+            activeSpaceId={activeSpaceId}
+            activeSpaceName={activeSpace?.name ?? ''}
+            personalName={personalName}
+            loading={searchLoading && searchResults.length === 0}
+            offline={searchOffline}
+            activeIndex={searchActiveIndex}
+            onActiveIndexChange={setSearchActiveIndex}
+            onLocate={(r) => handleLocateResult(r.space, r.bookmark.id)}
+            onOpenSpace={(space) => handleLocateResult(space)}
+          />
+        )}
+        <div className={searching ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
         <TopBar
           spaceName={activeSpace?.name ?? ''}
           collectionCount={collections.length}
@@ -682,7 +755,10 @@ export default function App() {
           allCollapsed={allCollapsed}
           onResetCollapsed={() => setAllCollapsed(null)}
           canEditContent={canEditContent}
+          highlightBookmarkId={highlightBookmarkId}
+          onHighlightDone={clearHighlight}
         />
+        </div>
       </main>
       </div>
 

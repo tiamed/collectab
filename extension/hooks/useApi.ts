@@ -12,7 +12,9 @@ import {
   getCachedBookmarksBySpace,
   setCachedBookmarksBySpace,
   setCachedBookmarksForCollection,
+  searchCachedBookmarks,
 } from '@/lib/dataCache';
+import { searchTerms } from '@/lib/search';
 import { subscribeBookmarksChanged } from '@/lib/bookmarksSync';
 import { isAbortError } from '@/lib/serverReachability';
 
@@ -191,6 +193,50 @@ export function useBookmarks(collectionId: string | null) {
   }, []);
 
   return { bookmarks, loading, error, refetch: fetch, add, update, remove };
+}
+
+/**
+ * Cross-space search. Cached matches show immediately; the server result
+ * (authoritative, covers uncached spaces) replaces them after a short debounce.
+ */
+export function useBookmarkSearch(query: string, enabled = true) {
+  const [results, setResults] = useState<api.SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [offline, setOffline] = useState(false);
+
+  useEffect(() => {
+    const terms = searchTerms(query);
+    if (!enabled || terms.length === 0) {
+      setResults([]);
+      setLoading(false);
+      setOffline(false);
+      return;
+    }
+
+    setResults(searchCachedBookmarks(terms));
+    setLoading(true);
+    const ac = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const data = await api.searchBookmarks(query.trim(), ac.signal);
+        if (ac.signal.aborted) return;
+        setResults(data);
+        setOffline(false);
+      } catch (e: unknown) {
+        if (isAbortError(e) || ac.signal.aborted) return;
+        setOffline(true);
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      ac.abort();
+    };
+  }, [query, enabled]);
+
+  return { results, loading, offline };
 }
 
 export function useCollectionBookmarks(spaceId: string | null) {

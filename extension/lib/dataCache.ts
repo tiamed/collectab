@@ -1,5 +1,6 @@
 import { browser } from 'wxt/browser';
-import type { Space, Collection, Bookmark, User, Organization } from './api';
+import type { Space, Collection, Bookmark, User, Organization, SearchResult } from './api';
+import { bookmarkMatches } from './search';
 
 const CACHE_KEY = 'data_cache_v2';
 const MAX_SPACES = 12;
@@ -195,6 +196,47 @@ export function setCachedBookmarksBySpace(
 ): Promise<void> {
   memory.bookmarksBySpace[spaceId] = { data, updatedAt: Date.now() };
   return scheduleSave(opts?.flush === true);
+}
+
+/**
+ * Offline / instant search over every cached space. Spaces or collections
+ * missing from the cache are skipped since they can't be labelled.
+ */
+export function searchCachedBookmarks(terms: string[]): SearchResult[] {
+  if (terms.length === 0) return [];
+  const spacesById = new Map<string, Space>();
+  for (const entry of Object.values(memory.spaces)) {
+    for (const s of entry.data) spacesById.set(s.id, s);
+  }
+  const orgsById = new Map((memory.organizations?.data ?? []).map((o) => [o.id, o]));
+
+  const results: SearchResult[] = [];
+  for (const [spaceId, entry] of Object.entries(memory.bookmarksBySpace)) {
+    const space = spacesById.get(spaceId);
+    if (!space) continue;
+    const cols = new Map((memory.collections[spaceId]?.data ?? []).map((c) => [c.id, c]));
+    const org = space.orgId ? orgsById.get(space.orgId) : undefined;
+    for (const [colId, bks] of Object.entries(entry.data)) {
+      const col = cols.get(colId);
+      if (!col) continue;
+      for (const b of bks) {
+        if (!bookmarkMatches(b, terms)) continue;
+        results.push({
+          bookmark: b,
+          collection: { id: col.id, name: col.name, icon: col.icon, orderIndex: col.orderIndex },
+          space: {
+            id: space.id,
+            name: space.name,
+            icon: space.icon,
+            orgId: space.orgId ?? null,
+            orderIndex: space.orderIndex,
+          },
+          org: space.orgId ? { id: space.orgId, name: org?.name ?? '', icon: org?.icon ?? null } : null,
+        });
+      }
+    }
+  }
+  return results;
 }
 
 /** Patch one collection inside a space cache entry. */

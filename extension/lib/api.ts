@@ -541,6 +541,26 @@ export interface Bookmark {
   updatedAt: string;
 }
 
+export interface SearchResult {
+  bookmark: Bookmark;
+  collection: { id: string; name: string; icon: string | null; orderIndex: number };
+  space: { id: string; name: string; icon: string | null; orgId: string | null; orderIndex: number };
+  org: { id: string; name: string; icon: string | null } | null;
+}
+
+export async function searchBookmarks(
+  query: string,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  const data = await request<{ results: SearchResult[] }>(
+    `/search?q=${encodeURIComponent(query)}`,
+    signal ? { signal } : {},
+  );
+  // Older servers return flat rows without space info.
+  if (data.results.some((r) => !r.space)) throw new ApiError('Unsupported search response', 501);
+  return data.results;
+}
+
 export async function reorderBookmarks(collectionId: string, bookmarkIds: string[]): Promise<void> {
   await request(`/bookmarks/reorder`, {
     method: 'PUT',

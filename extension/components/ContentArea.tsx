@@ -26,6 +26,9 @@ interface ContentAreaProps {
   onResetCollapsed: () => void;
   /** When false, hide collection edit affordances (viewer) */
   canEditContent?: boolean;
+  /** Scroll to + flash this bookmark once it is rendered (search "show in space"). */
+  highlightBookmarkId?: string | null;
+  onHighlightDone?: () => void;
 }
 
 export default function ContentArea({
@@ -44,6 +47,8 @@ export default function ContentArea({
   allCollapsed,
   onResetCollapsed,
   canEditContent = true,
+  highlightBookmarkId,
+  onHighlightDone,
 }: ContentAreaProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -82,6 +87,33 @@ export default function ContentArea({
   useEffect(() => {
     scrollRef.current?.scrollTo(0, 0);
   }, [spaceId]);
+
+  const [flashId, setFlashId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightBookmarkId) return;
+    const colId = Object.keys(bookmarksByCollection).find((id) =>
+      bookmarksByCollection[id].some((b) => b.id === highlightBookmarkId),
+    );
+    if (!colId || !collections.some((c) => c.id === colId)) return;
+
+    setCollapsed((prev) => (prev[colId] ? { ...prev, [colId]: false } : prev));
+    setFlashId(highlightBookmarkId);
+    onHighlightDone?.();
+  }, [highlightBookmarkId, bookmarksByCollection, collections, onHighlightDone]);
+
+  useEffect(() => {
+    if (!flashId) return;
+    const raf = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-bookmark-id="${CSS.escape(flashId)}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+    const t = setTimeout(() => setFlashId(null), 2400);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
+  }, [flashId]);
 
   useEffect(() => {
     if (allCollapsed === null) return;
@@ -550,6 +582,7 @@ export default function ContentArea({
                 onDelete={canEditContent ? (id) => onDeleteBookmark(id) : async () => {}}
                 onAddClick={canEditContent ? () => setAddingToCollection(collection.id) : () => {}}
                 readOnly={!canEditContent}
+                highlightedId={flashId}
               />
             )}
           </section>

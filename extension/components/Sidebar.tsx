@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Search, Layers, Settings, LogOut, Plus, Pencil, Trash2, MoreHorizontal, ChevronDown, UserPlus } from 'lucide-react';
+import { Search, Layers, Settings, LogOut, Plus, Pencil, Trash2, MoreHorizontal, ChevronDown, UserPlus, X } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import IconDisplay from './IconDisplay';
 import type { Space, User, Organization } from '@/lib/api';
@@ -16,6 +16,7 @@ function SortableSpaceRow({
   editInputRef,
   menuRef,
   canManage,
+  matchCount,
   onSelect,
   onStartRename,
   onDelete,
@@ -26,6 +27,7 @@ function SortableSpaceRow({
   onEditKeyDown,
 }: {
   space: Space;
+  matchCount?: number;
   activeSpaceId: string | null;
   editingSpaceId: string | null;
   editName: string;
@@ -88,6 +90,11 @@ function SortableSpaceRow({
             <span className="text-[var(--muted)]"> (from {space.ownerName})</span>
           )}
         </span>
+        {matchCount != null && matchCount > 0 && (
+          <span className="shrink-0 rounded bg-[var(--accent)]/15 px-1 text-[9px] font-medium text-[var(--accent)] group-hover:opacity-0">
+            {matchCount}
+          </span>
+        )}
       </button>
       {canManage && (
         <button
@@ -150,6 +157,10 @@ interface SidebarProps {
   onReorderSpaces: (orderedIds: string[]) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  /** Arrow/Enter handling for the results list; Escape is handled here. */
+  onSearchKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  /** Matches per spaceId while a search is active */
+  searchMatchCounts?: Record<string, number>;
   onOpenSettings: () => void;
   user: User;
   onAccountClick: () => void;
@@ -183,6 +194,8 @@ export default function Sidebar({
   onReorderSpaces,
   searchQuery,
   onSearchChange,
+  onSearchKeyDown,
+  searchMatchCounts,
   onOpenSettings,
   user,
   onAccountClick,
@@ -221,6 +234,24 @@ export default function Sidebar({
   const [editName, setEditName] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing = !!target && (
+        target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+      );
+      const isModK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k';
+      if (isModK || (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -368,15 +399,41 @@ export default function Sidebar({
       </div>
 
       {/* Search */}
-      <div className="flex h-9 items-center gap-2 px-4">
-        <Search className="size-[14px] text-[var(--muted)]" strokeWidth={1.5} />
-        <input
-          type="text"
-          placeholder="Search"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="h-full flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
-        />
+      <div className="px-3">
+        <div className="group/search flex h-8 items-center gap-2 rounded-md px-2 ring-[var(--accent)] focus-within:bg-[var(--surface)] focus-within:ring-1">
+          <Search className="size-[14px] shrink-0 text-[var(--muted)]" strokeWidth={1.5} />
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Search all spaces"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                if (searchQuery) onSearchChange('');
+                else e.currentTarget.blur();
+                return;
+              }
+              onSearchKeyDown?.(e);
+            }}
+            className="h-full min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
+          />
+          {searchQuery ? (
+            <button
+              onClick={() => { onSearchChange(''); searchInputRef.current?.focus(); }}
+              className="flex size-4 shrink-0 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--foreground)]"
+              title="Clear (Esc)"
+            >
+              <X className="size-3" />
+            </button>
+          ) : (
+            <kbd className="shrink-0 rounded border border-[var(--border)] px-1 font-sans text-[9px] text-[var(--muted)] group-focus-within/search:hidden">
+              /
+            </kbd>
+          )}
+        </div>
       </div>
 
       {/* Divider */}
@@ -413,6 +470,7 @@ export default function Sidebar({
                 editInputRef={editInputRef}
                 menuRef={menuRef}
                 canManage={canManageSpace(space)}
+                matchCount={searchMatchCounts?.[space.id]}
                 onSelect={() => onSpaceSelect(space.id)}
                 onStartRename={() => startRename(space)}
                 onDelete={() => handleDelete(space.id)}

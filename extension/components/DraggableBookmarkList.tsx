@@ -12,6 +12,7 @@ interface DraggableBookmarkListProps {
   onDelete: (id: string) => void;
   onAddClick: () => void;
   readOnly?: boolean;
+  highlightedId?: string | null;
 }
 
 function SortableBookmarkCard({
@@ -19,11 +20,13 @@ function SortableBookmarkCard({
   onEdit,
   onDelete,
   readOnly,
+  highlighted,
 }: {
   bookmark: Bookmark;
   onEdit: () => void;
   onDelete: () => void;
   readOnly?: boolean;
+  highlighted?: boolean;
 }) {
   // Track which src failed so a new favicon URL after sync/edit retries <img>
   const [failedFavicon, setFailedFavicon] = useState<string | null>(null);
@@ -55,7 +58,10 @@ function SortableBookmarkCard({
       href={bookmark.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="group relative flex w-[168px] flex-col gap-1.5 rounded-md bg-[var(--surface)] p-2.5 transition-colors hover:brightness-95 dark:hover:brightness-110"
+      data-bookmark-id={bookmark.id}
+      className={`group relative flex w-[168px] flex-col gap-1.5 rounded-md bg-[var(--surface)] p-2.5 transition-colors hover:brightness-95 dark:hover:brightness-110 ${
+        highlighted ? 'ring-2 ring-[var(--accent)] animate-pulse' : ''
+      }`}
       {...attributes}
       {...listeners}
     >
@@ -109,6 +115,7 @@ export default function DraggableBookmarkList({
   onDelete,
   onAddClick,
   readOnly = false,
+  highlightedId,
 }: DraggableBookmarkListProps) {
   const { setNodeRef } = useDroppable({
     id: `collection-${collectionId}`,
@@ -130,6 +137,7 @@ export default function DraggableBookmarkList({
             onEdit={() => onEdit(bookmark)}
             onDelete={() => onDelete(bookmark.id)}
             readOnly={readOnly}
+            highlighted={bookmark.id === highlightedId}
           />
         ))}
       </SortableContext>
