@@ -13,6 +13,7 @@ import {
 import FaviconField from '@/components/FaviconField';
 import { resolveFaviconUrl } from '@/lib/favicon';
 import { notifyBookmarksChanged } from '@/lib/bookmarksSync';
+import { descriptionForCreate } from '@/lib/bookmarkDescription';
 
 const STORAGE_KEY_ORG = 'active_org_id';
 const STORAGE_KEY_LAST_SPACE = 'popup_last_space';
@@ -21,6 +22,7 @@ const STORAGE_KEY_LAST_COLLECTION = 'popup_last_collection';
 export default function App() {
   const [title, setTitle] = useState('');
   const [url, setUrl] = useState('');
+  const [description, setDescription] = useState('');
   const [favicon, setFavicon] = useState('');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -168,6 +170,7 @@ export default function App() {
         collectionId: selectedCollectionId,
         title: title.trim() || url,
         url: url.trim(),
+        description: descriptionForCreate(description),
         favicon: favicon || undefined,
       });
       await notifyBookmarksChanged({
@@ -232,6 +235,18 @@ export default function App() {
           className="w-full rounded border border-[var(--border)] bg-[var(--field-background)] px-2.5 py-1.5 text-xs text-[var(--foreground)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+        />
+      </div>
+
+      {/* Description */}
+      <div>
+        <label className="mb-1 block text-[10px] font-medium text-[var(--muted)]">Description</label>
+        <textarea
+          rows={2}
+          className="w-full resize-none rounded border border-[var(--border)] bg-[var(--field-background)] px-2.5 py-1.5 text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)]"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Optional"
         />
       </div>
 

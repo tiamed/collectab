@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createTestApp, generateTestToken } from './helpers.js';
 
+const { recordedBookmarkUpdates } = vi.hoisted(() => ({
+  recordedBookmarkUpdates: [] as Record<string, unknown>[],
+}));
+
 vi.mock('../src/database/client.js', () => {
   const mockBookmarks: any[] = [];
   const mockCollection = {
@@ -75,11 +79,14 @@ vi.mock('../src/database/client.js', () => {
       }),
     }),
     update: () => ({
-      set: (data: any) => ({
-        where: () => ({
-          returning: () => Promise.resolve([{ ...mockBookmarks[0], ...data }]),
-        }),
-      }),
+      set: (data: any) => {
+        recordedBookmarkUpdates.push(data);
+        return {
+          where: () => ({
+            returning: () => Promise.resolve([{ ...(mockBookmarks[0] ?? {}), ...data }]),
+          }),
+        };
+      },
     }),
     delete: () => ({
       where: () => Promise.resolve(),
@@ -163,6 +170,22 @@ describe('Bookmarks routes', () => {
       expect(res.status).toBe(400);
     });
 
+    it('stores a non-empty description', async () => {
+      const res = await app.request('/api/bookmarks', {
+        method: 'POST',
+        headers: { ...authHeader, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          collectionId: '550e8400-e29b-41d4-a716-446655440000',
+          title: 'Example',
+          url: 'https://example.com',
+          description: 'Saved from the popup',
+        }),
+      });
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.bookmark.description).toBe('Saved from the popup');
+    });
+
     it('creates bookmark with valid data', async () => {
       const res = await app.request('/api/bookmarks', {
         method: 'POST',
@@ -209,6 +232,62 @@ describe('Bookmarks routes', () => {
         }),
       });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('PUT /api/bookmarks/:id description', () => {
+    const headers = { ...authHeader, 'Content-Type': 'application/json' };
+    const id = '550e8400-e29b-41d4-a716-446655440099';
+
+    it('clears a description when the update sends an empty string or null', async () => {
+      recordedBookmarkUpdates.length = 0;
+
+      const empty = await app.request(`/api/bookmarks/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ description: '' }),
+      });
+      expect(empty.status).toBe(200);
+      expect((await empty.json()).bookmark.description).toBeNull();
+
+      const blank = await app.request(`/api/bookmarks/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ description: '   ' }),
+      });
+      expect(blank.status).toBe(200);
+      expect((await blank.json()).bookmark.description).toBeNull();
+
+      const cleared = await app.request(`/api/bookmarks/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ description: null }),
+      });
+      expect(cleared.status).toBe(200);
+      expect((await cleared.json()).bookmark.description).toBeNull();
+
+      expect(recordedBookmarkUpdates.map((update) => update.description)).toEqual([null, null, null]);
+    });
+
+    it('keeps a non-empty description and leaves description unchanged when omitted', async () => {
+      recordedBookmarkUpdates.length = 0;
+
+      const kept = await app.request(`/api/bookmarks/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ description: '  Still here  ' }),
+      });
+      expect(kept.status).toBe(200);
+      expect((await kept.json()).bookmark.description).toBe('Still here');
+
+      const omitted = await app.request(`/api/bookmarks/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ title: 'Only title' }),
+      });
+      expect(omitted.status).toBe(200);
+      expect(recordedBookmarkUpdates[1]).not.toHaveProperty('description');
+      expect(recordedBookmarkUpdates[1].title).toBe('Only title');
     });
   });
 });

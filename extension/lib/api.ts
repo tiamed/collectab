@@ -602,7 +602,8 @@ export async function createBookmark(params: {
 export async function updateBookmark(id: string, updates: {
   title?: string;
   url?: string;
-  description?: string;
+  /** `null` clears the stored description. Omit the key to leave it unchanged. */
+  description?: string | null;
   favicon?: string;
   tags?: string[];
   orderIndex?: number;
