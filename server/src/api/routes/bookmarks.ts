@@ -92,7 +92,8 @@ const createSchema = z.object({
 const updateSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   url: z.string().url().optional(),
-  description: z.string().max(2000).optional(),
+  // null and "" both clear. Omitting the key leaves the stored value unchanged.
+  description: z.string().max(2000).nullable().optional(),
   favicon: z.string().optional(),
   tags: z.array(z.string()).optional(),
   orderIndex: z.number().int().min(0).optional(),
@@ -314,7 +315,10 @@ bookmarkRoutes.put('/:id', zValidator('json', updateSchema), async (c) => {
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.title !== undefined) updates.title = body.title;
   if (body.url !== undefined) updates.url = body.url;
-  if (body.description !== undefined) updates.description = body.description;
+  if (body.description !== undefined) {
+    const text = (body.description ?? '').trim();
+    updates.description = text || null;
+  }
   if (body.favicon !== undefined) updates.favicon = body.favicon;
   if (body.tags !== undefined) updates.tags = body.tags;
   if (body.orderIndex !== undefined) updates.orderIndex = body.orderIndex;

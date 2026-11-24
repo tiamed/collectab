@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { X } from 'lucide-react';
 import type { Bookmark, Collection } from '@/lib/api';
+import { descriptionForUpdate } from '@/lib/bookmarkDescription';
 import FaviconField from './FaviconField';
 
 interface EditBookmarkModalProps {
@@ -27,7 +28,7 @@ export default function EditBookmarkModal({ bookmark, collections, onSave, onClo
       await onSave({
         title,
         url,
-        description: description || undefined,
+        description: descriptionForUpdate(description),
         tags: tags ? tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
         favicon,
         collectionId: collectionId !== bookmark.collectionId ? collectionId : undefined,

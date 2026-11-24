@@ -26,6 +26,7 @@ import { CrdtOrderManager } from '@/lib/crdt-order-mgr';
 import { CrdtSyncClient } from '@/lib/crdt-sync-port';
 import { collectCrdtIds, diffRemovedIds, reconcileCrdtOrder } from '@/lib/crdt-reconcile';
 import { ensureDataCacheLoaded, getCachedUser } from '@/lib/dataCache';
+import { descriptionForUpdate } from '@/lib/bookmarkDescription';
 
 const STORAGE_KEY_ORG = 'active_org_id';
 const STORAGE_KEY_SPACE = 'active_space_id';
@@ -542,7 +543,7 @@ export default function App() {
     const clean: Parameters<typeof update>[1] = {
       title: updates.title,
       url: updates.url,
-      description: updates.description ?? undefined,
+      description: descriptionForUpdate(updates.description),
       favicon: updates.favicon ?? undefined,
       tags: updates.tags,
       collectionId: updates.collectionId,
